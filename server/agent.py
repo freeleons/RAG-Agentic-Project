@@ -4,6 +4,7 @@ from flask import current_app
 from sqlalchemy import func
 
 from server.llm import generate
+from server.langsmith import log_langsmith_run
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
 from server.tools import TOOLS, openai_tool_defs, validate_arguments
@@ -66,6 +67,7 @@ def _finish(run, status, answer):
         .scalar()
     )
     db.session.commit()
+    log_langsmith_run(run, answer)
     return {"run_id": run.id, "status": status, "answer": answer}
 
 

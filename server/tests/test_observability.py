@@ -53,3 +53,22 @@ def test_record_step_stores_tokens_and_strips_usage(app, run):
     assert step.prompt_tokens == 150
     assert step.completion_tokens == 20
     assert "usage" not in step.result
+
+
+def test_finish_logs_langsmith_run_on_end(app, run, monkeypatch):
+    from server.agent import _finish
+    from server.langsmith import log_langsmith_run
+
+    called = {}
+
+    def fake_log(run_obj, answer_text):
+        called["run_id"] = run_obj.id
+        called["answer"] = answer_text
+
+    monkeypatch.setattr("server.agent.log_langsmith_run", fake_log)
+    result = _finish(run, "completed", "all done")
+
+    assert result["status"] == "completed"
+    assert result["answer"] == "all done"
+    assert called["run_id"] == run.id
+    assert called["answer"] == "all done"
