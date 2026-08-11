@@ -12,7 +12,8 @@ def app():
         {
             "TESTING": True,
             "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
-            "SECRET_KEY": "test-secret",
+            "SECRET_KEY": "test-secret-key-32-bytes-minimum-length-for-security!",
+            "ANYTHINGLLM_WORKSPACE": "apprentice-kb",
             "JWT_EXPIRY_HOURS": 24,
         }
     )
