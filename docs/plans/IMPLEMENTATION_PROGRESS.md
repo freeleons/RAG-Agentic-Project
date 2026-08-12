@@ -11,7 +11,7 @@
 
 **Workflow:**
 ```
-Scan knowledge_base/ and sample-data/
+Scan knowledge_base/
     ↓
 GET /api/v1/workspace/{slug} query documents already in workspace (documents[].title)
     ↓

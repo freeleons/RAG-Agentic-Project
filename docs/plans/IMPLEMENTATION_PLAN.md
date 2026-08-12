@@ -68,7 +68,7 @@ Base URL = `ANYTHINGLLM_BASE_URL` + `/api` (consistent with verified chat endpoi
 Seed knowledge base documents to AnythingLLM.
 
 This script:
-1. Scans knowledge_base/ and sample-data/ directories
+1. Scans knowledge_base/ directory
 2. Reads all .txt, .md, .pdf files
 3. Uploads new files to AnythingLLM and embeds them into the target workspace
    in one call (POST /v1/document/upload with addToWorkspaces=<slug>)
@@ -128,9 +128,9 @@ class AnythingLLMClient:
 
 
 def find_knowledge_files() -> List[Path]:
-    """Scan knowledge_base/ and sample-data/ for .txt/.md/.pdf files, excluding README.md."""
+    """Scan knowledge_base/ for .txt/.md/.pdf files, excluding README.md."""
     project_root = Path(__file__).parent.parent
-    directories = [project_root / "knowledge_base", project_root / "sample-data"]
+    directories = [project_root / "knowledge_base"]
     files: List[Path] = []
     for directory in directories:
         if directory.exists():
@@ -184,8 +184,8 @@ if __name__ == "__main__":
     main()
 ```
 
-**To be confirmed (requires team decision before writing formal code, not a technical issue):**
-- Should `knowledge_base/` (team's own HR/benefits PDFs) and `sample-data/` (starter's placeholder data) be uploaded into the same workspace? Mixing them may affect readability of `docs/eval.md` evaluation — recommend asking teammates about the relationship between these two batches of data.
+**Note on Data Scope:**
+- Scans `knowledge_base/` for active domain docs (`company_policies.txt`, `it_support_faq.txt`). Starter files from `tests/fixtures/sample-data/` are archived for test fixtures and omitted from vector ingestion.
 
 ---
 

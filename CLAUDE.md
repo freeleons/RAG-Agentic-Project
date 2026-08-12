@@ -10,7 +10,7 @@ A **starter template** for a 4-week apprentice project: build an AI agent (Flask
 
 Two systems that talk to each other:
 
-1. **Knowledge service (run, not written)** — AnythingLLM in Docker at `http://localhost:3001`. Documents from `sample-data/` are embedded into a workspace; the agent queries it via AnythingLLM's developer API (Bearer key auth, workspace chat endpoint).
+1. **Knowledge service (run, not written)** — AnythingLLM in Docker at `http://localhost:3001`. Documents from `knowledge_base/` are embedded into a workspace; the agent queries it via AnythingLLM's developer API (Bearer key auth, workspace chat endpoint).
 2. **The agent (built here)** — Flask backend + React (Vite) frontend. The core is a **bounded agent loop**: the LLM picks a tool → tool executes → LLM observes the result → repeat until done or `MAX_AGENT_STEPS` is hit. One tool is always `search_knowledge(query)` (calls AnythingLLM); at least two more tools per the chosen project option (README §5).
 
 Intended layout (from README):
