@@ -18,7 +18,7 @@ def _endpoint_and_headers():
         headers = {}
     return f"{base}/chat/completions", headers
 
-
+#modern tool-calling 
 def generate(messages, tools):
     """One model call. Returns {"type": "final", "content": str} or
     {"type": "tool_call", "name": str, "arguments": dict, "call_id": str}."""
