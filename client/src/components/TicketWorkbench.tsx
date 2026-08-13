@@ -43,23 +43,29 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   useEffect(() => {
     if (!ticket) return;
 
-    // 1. If user has active local edits saved in memory for this ticket, preserve them
+    const hasNewDraftFromPip =
+      ticket.draft_reply && ticket.draft_reply !== lastSeenDrafts.current[ticket.id];
+
+    // 1. If Pip just generated a new draft reply, ALWAYS populate it and update cache
+    if (hasNewDraftFromPip) {
+      setReplyInput(ticket.draft_reply!);
+      setTicketDrafts((prev) => ({ ...prev, [ticket.id]: ticket.draft_reply! }));
+      lastSeenDrafts.current[ticket.id] = ticket.draft_reply;
+      return;
+    }
+
+    // 2. Otherwise, if user has active local edits saved in memory for this ticket, preserve them
     if (ticketDrafts[ticket.id] !== undefined) {
       setReplyInput(ticketDrafts[ticket.id]);
       return;
     }
 
-    // 2. Only auto-fill draft_reply if the ticket is explicitly in 'draft_pending' status
-    const hasNewDraft = ticket.draft_reply !== lastSeenDrafts.current[ticket.id];
-    
+    // 3. Fallback for draft_pending status or open tickets
     if (ticket.status === "draft_pending" && ticket.draft_reply) {
-      if (hasNewDraft || replyInput === "") {
-        setReplyInput(ticket.draft_reply);
-        setTicketDrafts((prev) => ({ ...prev, [ticket.id]: ticket.draft_reply || "" }));
-        lastSeenDrafts.current[ticket.id] = ticket.draft_reply;
-      }
+      setReplyInput(ticket.draft_reply);
+      setTicketDrafts((prev) => ({ ...prev, [ticket.id]: ticket.draft_reply! }));
+      lastSeenDrafts.current[ticket.id] = ticket.draft_reply;
     } else if (ticket.status === "open") {
-      // Open tickets should always default to an empty input unless locally edited
       setReplyInput("");
     }
   }, [ticket?.id, ticket?.status, ticket?.draft_reply]);
@@ -241,11 +247,10 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
                     handleManualSend(e);
                   }
                 }}
-                className={`w-full p-4 rounded-2xl text-xs sm:text-sm leading-relaxed transition-all min-h-[140px] max-h-[280px] overflow-y-auto custom-scrollbar font-medium ${
-                  isTicketTriaging
+                className={`w-full p-4 rounded-2xl text-xs sm:text-sm leading-relaxed transition-all min-h-[140px] max-h-[280px] overflow-y-auto custom-scrollbar font-medium ${isTicketTriaging
                     ? "bg-blue-500/10 dark:bg-blue-500/20 border-2 border-blue-500/60 text-blue-700 dark:text-blue-300 font-mono font-bold animate-pulse"
                     : "bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                }`}
+                  }`}
               />
             </div>
 
@@ -270,11 +275,10 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
                     type="button"
                     onClick={() => ticket && onRunTriage(ticket)}
                     disabled={!ticket}
-                    className={`px-4 py-2 rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition shadow-md cursor-pointer whitespace-nowrap ${
-                      !ticket
+                    className={`px-4 py-2 rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition shadow-md cursor-pointer whitespace-nowrap ${!ticket
                         ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed"
                         : "bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white hover:opacity-95 shadow-blue-500/25 pulse-glow"
-                    }`}
+                      }`}
                   >
                     <span>✨</span>
                     <span>Draft with Pip</span>

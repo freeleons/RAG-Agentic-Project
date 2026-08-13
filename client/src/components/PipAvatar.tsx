@@ -1,6 +1,15 @@
 import React, { useState } from "react";
 
-export type PipStatusState = "idle" | "thinking" | "talking" | "explaining" | "needs_confirmation" | "completed" | "declined" | "error" | "not_found";
+export type PipStatusState =
+  | "idle"
+  | "thinking"
+  | "talking"
+  | "explaining"
+  | "needs_confirmation"
+  | "completed"
+  | "stopped"
+  | "error"
+  | "not_found";
 
 interface PipAvatarProps {
   status?: PipStatusState;
@@ -43,7 +52,12 @@ export const PipAvatar: React.FC<PipAvatarProps> = ({
           "Ticket updated and resolved! 🌟",
           "High-five! Another employee helped! 🖐️",
         ];
-      case "declined":
+      case "stopped":
+        return [
+          "Workflow halted on command! 🛑",
+          "Request cancelled—standing by! ⏸️",
+          "Ready whenever you want to try again! ⚡",
+        ];
       case "error":
       case "not_found":
         return [
@@ -74,44 +88,121 @@ export const PipAvatar: React.FC<PipAvatarProps> = ({
     }, 3000);
   };
 
-  // Dimensions based on size prop
-  const sizeClasses = {
-    xs: "w-7 h-7 text-[10px]",
-    sm: "w-9 h-9 text-xs",
-    md: "w-12 h-12 text-base",
-    lg: "w-20 h-20 text-xl",
-    xl: "w-28 h-28 text-3xl",
+  // Proportional geometry dimensions for all sizes
+  const sizeConfig = {
+    xs: {
+      outer: "w-7 h-7 rounded-lg text-[10px]",
+      eye: "w-1.5 h-1.5",
+      pupil: "w-1 h-1",
+      mouthOpen: "w-2.5 h-1.5",
+      mouthArc: "w-2.5 h-1",
+      mouthStraight: "w-2 h-[2px]",
+      earLeft: "w-1 h-2 -left-1",
+      earRight: "w-1 h-2 -right-1",
+      antennaOuter: "w-1.5 h-1.5",
+      antennaInner: "w-0.5 h-1",
+      spacing: "space-x-1",
+      blush: "top-3 px-1",
+      blushCircle: "w-1 h-0.5",
+      eyebrow: "text-[8px]",
+    },
+    sm: {
+      outer: "w-9 h-9 rounded-xl text-xs",
+      eye: "w-2.5 h-2.5",
+      pupil: "w-1 h-1",
+      mouthOpen: "w-3 h-1.5",
+      mouthArc: "w-3 h-1",
+      mouthStraight: "w-2.5 h-[2px]",
+      earLeft: "w-1 h-2.5 -left-1",
+      earRight: "w-1 h-2.5 -right-1",
+      antennaOuter: "w-2 h-2",
+      antennaInner: "w-0.5 h-1.5",
+      spacing: "space-x-1.5",
+      blush: "top-4 px-1.5",
+      blushCircle: "w-1.5 h-0.5",
+      eyebrow: "text-[10px]",
+    },
+    md: {
+      outer: "w-12 h-12 rounded-xl text-base",
+      eye: "w-3 h-3",
+      pupil: "w-1.5 h-1.5",
+      mouthOpen: "w-4 h-2",
+      mouthArc: "w-3.5 h-1.5",
+      mouthStraight: "w-3 h-[2px]",
+      earLeft: "w-1.5 h-3 -left-1.5",
+      earRight: "w-1.5 h-3 -right-1.5",
+      antennaOuter: "w-2.5 h-2.5",
+      antennaInner: "w-1 h-2",
+      spacing: "space-x-2.5",
+      blush: "top-5 px-2",
+      blushCircle: "w-2 h-1",
+      eyebrow: "text-xs",
+    },
+    lg: {
+      outer: "w-16 h-16 rounded-2xl text-lg",
+      eye: "w-4 h-4",
+      pupil: "w-2 h-2",
+      mouthOpen: "w-5 h-2.5",
+      mouthArc: "w-4 h-2",
+      mouthStraight: "w-4 h-[3px]",
+      earLeft: "w-2 h-4 -left-2",
+      earRight: "w-2 h-4 -right-2",
+      antennaOuter: "w-3 h-3",
+      antennaInner: "w-1 h-2.5",
+      spacing: "space-x-3",
+      blush: "top-7 px-2.5",
+      blushCircle: "w-3 h-1",
+      eyebrow: "text-base",
+    },
+    xl: {
+      outer: "w-24 h-24 text-2xl rounded-3xl",
+      eye: "w-6 h-6",
+      pupil: "w-3 h-3",
+      mouthOpen: "w-8 h-4",
+      mouthArc: "w-7 h-3",
+      mouthStraight: "w-6 h-[4px]",
+      earLeft: "w-2.5 h-6 -left-2.5",
+      earRight: "w-2.5 h-6 -right-2.5",
+      antennaOuter: "w-4 h-4",
+      antennaInner: "w-1.5 h-3",
+      spacing: "space-x-4",
+      blush: "top-10 px-3.5",
+      blushCircle: "w-4 h-1.5",
+      eyebrow: "text-xl",
+    },
   }[size];
 
-  // Status Glow & Border
   const glowClasses = {
     thinking: "shadow-cyan-500/40 border-cyan-300 animate-pulse",
     talking: "shadow-blue-500/30 border-blue-300",
     explaining: "shadow-indigo-500/40 border-indigo-300",
     needs_confirmation: "shadow-amber-500/50 border-amber-300 animate-bounce",
     completed: "shadow-emerald-500/40 border-emerald-300",
-    declined: "shadow-rose-500/40 border-rose-300",
+    stopped: "shadow-slate-500/40 border-slate-400",
     error: "shadow-rose-500/40 border-rose-300",
     not_found: "shadow-rose-500/40 border-rose-300",
     idle: "shadow-blue-500/20 border-blue-400/80 hover:border-cyan-300 transition-all",
   }[status];
 
-  // Status Background Gradient
   const bgGradient = {
     thinking: "from-cyan-600 via-blue-600 to-indigo-700",
     talking: "from-blue-600 via-indigo-600 to-cyan-500",
     explaining: "from-indigo-600 via-blue-600 to-cyan-500",
     needs_confirmation: "from-amber-600 via-orange-600 to-amber-700",
     completed: "from-emerald-600 via-teal-600 to-emerald-700",
-    declined: "from-rose-600 via-red-600 to-rose-800",
+    stopped: "from-slate-600 via-slate-700 to-slate-800",
     error: "from-rose-600 via-red-600 to-rose-800",
     not_found: "from-rose-600 via-red-600 to-rose-800",
     idle: "from-blue-600 via-indigo-600 to-cyan-500",
   }[status];
 
   return (
-    <div className="relative inline-block cursor-pointer select-none group" onClick={handlePipClick} title="Click Pip to see his response!">
-      {/* Celebration Stars Popup for Completed State */}
+    <div
+      className="relative inline-block cursor-pointer select-none group"
+      onClick={handlePipClick}
+      title="Click Pip to see his response!"
+    >
+      {/* Celebration Stars Popup */}
       {status === "completed" && (
         <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex space-x-1 animate-bounce z-40 pointer-events-none">
           <span className="text-xs">✨</span>
@@ -119,14 +210,22 @@ export const PipAvatar: React.FC<PipAvatarProps> = ({
         </div>
       )}
 
-      {/* Puzzled Question Mark Popup for Not Found / Error */}
-      {(status === "error" || status === "not_found" || status === "declined") && (
+      {/* Stop / Halt Indicator Badge */}
+      {status === "stopped" && (
+        <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-40 text-xs font-bold bg-slate-800 text-slate-200 border border-slate-600 rounded-full px-2 py-0.5 shadow-md flex items-center space-x-1">
+          <span>⏹️</span>
+          <span className="text-[10px]">Stopped</span>
+        </div>
+      )}
+
+      {/* Question Mark Popup for Error / Not Found */}
+      {(status === "error" || status === "not_found") && (
         <div className="absolute -top-6 right-0 z-40 animate-pulse text-xs font-bold bg-amber-400 text-slate-900 rounded-full w-4 h-4 flex items-center justify-center shadow-xs">
           ❓
         </div>
       )}
 
-      {/* Speech Bubble Popup (Sleek floating pill badge centered cleanly under Pip) */}
+      {/* Speech Bubble Popup */}
       {speechBubble && (
         <div className="absolute top-full mt-2.5 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 dark:bg-slate-800 text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-2xl border border-blue-400/60 whitespace-nowrap animate-fadeIn flex items-center space-x-1.5 pointer-events-none">
           <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 dark:bg-slate-800 border-l border-t border-blue-400/60 rotate-45"></div>
@@ -136,79 +235,93 @@ export const PipAvatar: React.FC<PipAvatarProps> = ({
       )}
 
       {/* Main Square Robot Avatar Shell */}
-      <div className={`relative ${sizeClasses} rounded-xl bg-gradient-to-tr ${bgGradient} border-2 ${glowClasses} flex items-center justify-center text-white font-bold shadow-md transition-all group-hover:rotate-2 active:scale-95`}>
-
-        {/* Cute Side Ear Bolts */}
-        <span className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-3 bg-blue-400/80 rounded-l-md border-y border-l border-white/40"></span>
-        <span className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-1.5 h-3 bg-blue-400/80 rounded-r-md border-y border-r border-white/40"></span>
+      <div
+        className={`relative ${sizeConfig.outer} bg-gradient-to-tr ${bgGradient} border-2 ${glowClasses} flex items-center justify-center text-white font-bold shadow-md transition-all group-hover:rotate-2 active:scale-95`}
+      >
+        {/* Side Ear Bolts */}
+        <span
+          className={`absolute ${sizeConfig.earLeft} top-1/2 -translate-y-1/2 bg-blue-400/80 rounded-l-md border-y border-l border-white/40`}
+        ></span>
+        <span
+          className={`absolute ${sizeConfig.earRight} top-1/2 -translate-y-1/2 bg-blue-400/80 rounded-r-md border-y border-r border-white/40`}
+        ></span>
 
         {/* Antenna Light Bulb */}
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 flex flex-col items-center">
-          <span className={`w-2.5 h-2.5 rounded-full border border-white/60 shadow-xs ${status === "thinking"
-              ? "bg-cyan-300 animate-ping"
-              : status === "needs_confirmation" || status === "explaining"
-                ? "bg-amber-300 animate-pulse"
-                : status === "completed"
-                  ? "bg-emerald-300 animate-bounce"
-                  : status === "error" || status === "not_found"
-                    ? "bg-rose-400 animate-pulse"
-                    : "bg-cyan-300 animate-pulse"
-            }`}></span>
-          <span className="w-1 h-2 bg-slate-400 rounded-t"></span>
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full flex flex-col items-center">
+          <span
+            className={`rounded-full border border-white/60 shadow-xs ${sizeConfig.antennaOuter} ${status === "thinking"
+                ? "bg-cyan-300 animate-ping"
+                : status === "needs_confirmation" || status === "explaining"
+                  ? "bg-amber-300 animate-pulse"
+                  : status === "completed"
+                    ? "bg-emerald-300 animate-bounce"
+                    : status === "stopped"
+                      ? "bg-slate-400"
+                      : status === "error" || status === "not_found"
+                        ? "bg-rose-400 animate-pulse"
+                        : "bg-cyan-300 animate-pulse"
+              }`}
+          ></span>
+          <span className={`${sizeConfig.antennaInner} bg-slate-400 rounded-t`}></span>
         </div>
 
-        {/* Square Robot Face Expressions */}
-        <div className="flex flex-col items-center justify-center space-y-0.5 w-full h-full p-1 relative">
-
-          {/* Cute Rosy Blush Cheeks */}
-          <div className="absolute w-full px-2 flex justify-between top-5 pointer-events-none">
-            <span className="w-2 h-1 rounded-full bg-pink-300/60 blur-[0.5px]"></span>
-            <span className="w-2 h-1 rounded-full bg-pink-300/60 blur-[0.5px]"></span>
+        {/* Face Expressions */}
+        <div className="flex flex-col items-center justify-center space-y-1 w-full h-full relative">
+          {/* Blush Cheeks */}
+          <div className={`absolute w-full flex justify-between pointer-events-none ${sizeConfig.blush}`}>
+            <span className={`${sizeConfig.blushCircle} rounded-full bg-pink-300/60 blur-[0.5px]`}></span>
+            <span className={`${sizeConfig.blushCircle} rounded-full bg-pink-300/60 blur-[0.5px]`}></span>
           </div>
 
           {/* Eyes Row */}
-          <div className="flex items-center space-x-2.5 z-10">
+          <div className={`flex items-center ${sizeConfig.spacing} z-10`}>
             {status === "thinking" ? (
               /* 1. THINKING: Scanning Laser Eyes */
               <>
-                <div className="w-2.5 h-2.5 rounded-full bg-cyan-200 animate-ping"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-cyan-200 animate-ping"></div>
+                <div className={`${sizeConfig.eye} rounded-full bg-cyan-200 animate-ping`}></div>
+                <div className={`${sizeConfig.eye} rounded-full bg-cyan-200 animate-ping`}></div>
               </>
             ) : status === "completed" || isBigSmile ? (
               /* 2. CELEBRATION / BIG SMILE: Happy Arc Eyes (^‿^) */
               <>
-                <span className="text-white font-bold text-sm font-mono tracking-tighter">^</span>
-                <span className="text-white font-bold text-sm font-mono tracking-tighter">^</span>
+                <span className={`text-white font-bold font-mono tracking-tighter ${sizeConfig.eyebrow}`}>^</span>
+                <span className={`text-white font-bold font-mono tracking-tighter ${sizeConfig.eyebrow}`}>^</span>
+              </>
+            ) : status === "stopped" ? (
+              /* 3. STOPPED: Neutral Flat Line Eyes (-_-) */
+              <>
+                <div className={`${sizeConfig.mouthStraight} bg-white rounded-full`}></div>
+                <div className={`${sizeConfig.mouthStraight} bg-white rounded-full`}></div>
               </>
             ) : status === "explaining" || status === "needs_confirmation" ? (
-              /* 3. EXPLAINING / REVIEW: Wide Animated Eyes */
+              /* 4. EXPLAINING: Wide Animated Pupil Eyes */
               <>
-                <div className="w-3 h-3 rounded-full bg-white flex items-center justify-center">
-                  <div className="w-1.5 h-1.5 rounded-full bg-slate-900 animate-pulse"></div>
+                <div className={`${sizeConfig.eye} rounded-full bg-white flex items-center justify-center`}>
+                  <div className={`${sizeConfig.pupil} rounded-full bg-slate-900 animate-pulse`}></div>
                 </div>
-                <div className="w-3 h-3 rounded-full bg-white flex items-center justify-center">
-                  <div className="w-1.5 h-1.5 rounded-full bg-slate-900 animate-pulse"></div>
+                <div className={`${sizeConfig.eye} rounded-full bg-white flex items-center justify-center`}>
+                  <div className={`${sizeConfig.pupil} rounded-full bg-slate-900 animate-pulse`}></div>
                 </div>
               </>
-            ) : status === "declined" || status === "error" || status === "not_found" ? (
-              /* 4. CAN'T FIND / PUZZLED: One Raised Eyebrow (•_o) */
+            ) : status === "error" || status === "not_found" ? (
+              /* 5. PUZZLED / ERROR: One Raised Eyebrow (•_o) */
               <>
-                <div className="w-2.5 h-2.5 rounded-full bg-white flex items-center justify-center">
-                  <div className="w-1 h-1 rounded-full bg-slate-900"></div>
+                <div className={`${sizeConfig.eye} rounded-full bg-white flex items-center justify-center`}>
+                  <div className={`${sizeConfig.pupil} rounded-full bg-slate-900`}></div>
                 </div>
-                <span className="text-white font-bold text-xs font-mono">o</span>
+                <span className={`text-white font-bold font-mono ${sizeConfig.eyebrow}`}>o</span>
               </>
             ) : (
-              /* 5. DEFAULT / IDLE & TALKING: Kawaii Sparkle Eyes */
+              /* 6. DEFAULT / IDLE & TALKING: Kawaii Sparkle Eyes */
               <>
-                <div className="w-3 h-3 rounded-full bg-white flex items-center justify-center shadow-xs">
-                  <div className="w-1.5 h-1.5 rounded-full bg-slate-900 relative">
-                    <span className="absolute -top-0.5 -right-0.5 w-0.5 h-0.5 bg-white rounded-full"></span>
+                <div className={`${sizeConfig.eye} rounded-full bg-white flex items-center justify-center shadow-xs`}>
+                  <div className={`${sizeConfig.pupil} rounded-full bg-slate-900 relative`}>
+                    <span className="absolute -top-0.5 -right-0.5 w-1 h-1 bg-white rounded-full"></span>
                   </div>
                 </div>
-                <div className="w-3 h-3 rounded-full bg-white flex items-center justify-center shadow-xs">
-                  <div className="w-1.5 h-1.5 rounded-full bg-slate-900 relative">
-                    <span className="absolute -top-0.5 -right-0.5 w-0.5 h-0.5 bg-white rounded-full"></span>
+                <div className={`${sizeConfig.eye} rounded-full bg-white flex items-center justify-center shadow-xs`}>
+                  <div className={`${sizeConfig.pupil} rounded-full bg-slate-900 relative`}>
+                    <span className="absolute -top-0.5 -right-0.5 w-1 h-1 bg-white rounded-full"></span>
                   </div>
                 </div>
               </>
@@ -216,29 +329,32 @@ export const PipAvatar: React.FC<PipAvatarProps> = ({
           </div>
 
           {/* Mouth Line */}
-          <div className="z-10 pt-0.5">
+          <div className="z-10">
             {isBigSmile || status === "completed" ? (
-              /* Big Open Happy Smile */
-              <div className="w-4 h-2 bg-white rounded-b-full shadow-xs"></div>
+              /* Big Happy Open Smile */
+              <div className={`${sizeConfig.mouthOpen} bg-white rounded-b-full shadow-xs`}></div>
             ) : status === "thinking" ? (
-              /* Animated Wave Mouth Dots [ • • • ] */
+              /* Animated Wave Dots [ • • • ] */
               <div className="flex space-x-0.5">
                 <span className="w-1 h-1 rounded-full bg-white animate-bounce"></span>
                 <span className="w-1 h-1 rounded-full bg-white animate-bounce delay-100"></span>
                 <span className="w-1 h-1 rounded-full bg-white animate-bounce delay-200"></span>
               </div>
             ) : status === "talking" ? (
-              /* Happy Open Smile Talking Mouth */
-              <div className="w-3.5 h-2 bg-white rounded-b-full animate-pulse shadow-xs"></div>
+              /* Talking Happy Open Mouth */
+              <div className={`${sizeConfig.mouthOpen} bg-white rounded-b-full animate-pulse shadow-xs`}></div>
+            ) : status === "stopped" ? (
+              /* Neutral Straight Mouth (-) */
+              <div className={`${sizeConfig.mouthStraight} bg-white rounded-full`}></div>
             ) : status === "explaining" || status === "needs_confirmation" ? (
-              /* Explaining Open Speech Mouth */
-              <div className="w-3.5 h-1.5 rounded-full bg-white"></div>
-            ) : status === "declined" || status === "error" || status === "not_found" ? (
+              /* Open Speech Oval Mouth */
+              <div className={`${sizeConfig.mouthOpen} rounded-full bg-white`}></div>
+            ) : status === "error" || status === "not_found" ? (
               /* Puzzled Wavy Mouth ( ~ ) */
-              <div className="w-3.5 h-1 border-b-2 border-dashed border-white"></div>
+              <div className={`${sizeConfig.mouthArc} border-b-2 border-dashed border-white`}></div>
             ) : (
-              /* Cute Joyful Smile Arc */
-              <div className="w-3.5 h-1 border-b-2 border-white rounded-b-full"></div>
+              /* Default Cute Smile Arc */
+              <div className={`${sizeConfig.mouthArc} border-b-2 border-white rounded-b-full`}></div>
             )}
           </div>
         </div>

@@ -3,7 +3,7 @@ import { login, register } from "../api";
 import { UserProfile } from "../types";
 
 interface AuthPageProps {
-  onLoginSuccess: (token: string, user: UserProfile) => void;
+  onLoginSuccess: (token: string, user: UserProfile, isNewOrDemo?: boolean) => void;
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
@@ -25,7 +25,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
     try {
       // Attempt standard login first
       const authData = await login(demoEmail, demoPassword);
-      onLoginSuccess(authData.token, authData.user);
+      onLoginSuccess(authData.token, authData.user, true);
     } catch (err) {
       // If account does not exist yet on fresh DB, auto-register then login
       try {
@@ -37,7 +37,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
           role_title: "Lead Support Specialist",
         });
         const authData = await login(demoEmail, demoPassword);
-        onLoginSuccess(authData.token, authData.user);
+        onLoginSuccess(authData.token, authData.user, true);
       } catch (regErr: any) {
         setError(regErr.message || "Failed to initialize demo account");
       }
@@ -62,10 +62,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
         });
         // Auto-login after registration
         const authData = await login(email, password);
-        onLoginSuccess(authData.token, authData.user);
+        onLoginSuccess(authData.token, authData.user, true);
       } else {
         const authData = await login(email, password);
-        onLoginSuccess(authData.token, authData.user);
+        onLoginSuccess(authData.token, authData.user, false);
       }
     } catch (err: any) {
       setError(err.message || "Authentication failed");

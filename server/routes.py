@@ -9,7 +9,7 @@ from server.auth import require_auth
 from server.llm import generate
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
-from server.tools import create_draft
+from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
 from server.utils import is_client_disconnected
 from server.prompts import (

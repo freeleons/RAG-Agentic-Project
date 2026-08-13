@@ -14,6 +14,7 @@ import { AICopilotWidget } from "./components/AICopilotWidget";
 import { Header } from "./components/Header";
 import { KnowledgeInspectorModal } from "./components/KnowledgeInspectorModal";
 import { ObservabilityAuditView } from "./components/ObservabilityAuditView";
+import { PipOnboardingModal } from "./components/PipOnboardingModal";
 import { TicketQueue } from "./components/TicketQueue";
 import { TicketWorkbench } from "./components/TicketWorkbench";
 import { AgentRun, Ticket, UserProfile } from "./types";
@@ -56,6 +57,7 @@ export default function App() {
   const [isLoadingTickets, setIsLoadingTickets] = useState<boolean>(false);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [auditResetKey, setAuditResetKey] = useState<number>(0);
 
   // Per-ticket triage processing state map
@@ -153,10 +155,13 @@ export default function App() {
     }
   };
 
-  const handleLoginSuccess = (authToken: string, authUser: UserProfile) => {
+  const handleLoginSuccess = (authToken: string, authUser: UserProfile, isNewOrDemo?: boolean) => {
     localStorage.setItem("apexcare_token", authToken);
     setToken(authToken);
     setUser(authUser);
+    if (isNewOrDemo) {
+      setShowOnboarding(true);
+    }
   };
 
   const handleLogout = () => {
@@ -500,6 +505,14 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Onboarding Tutorial Modal */}
+      {showOnboarding && user && (
+        <PipOnboardingModal
+          userName={user.full_name}
+          onComplete={() => setShowOnboarding(false)}
+        />
       )}
     </div>
   );

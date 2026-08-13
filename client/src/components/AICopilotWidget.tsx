@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from "react";
-
 import { AgentRun, Ticket, UserProfile } from "../types";
 import { PipAvatar, PipStatusState } from "./PipAvatar";
 
@@ -20,7 +19,7 @@ interface ChatMessage {
 
 const mapRunStepToStatus = (latestStep?: { kind: string; tool_name?: string }): string => {
   if (!latestStep) return "🧠 Analyzing request...";
-  
+
   if (latestStep.kind === "tool_call") {
     switch (latestStep.tool_name) {
       case "search_knowledge":
@@ -33,7 +32,7 @@ const mapRunStepToStatus = (latestStep?: { kind: string; tool_name?: string }): 
         return `🛠️ Executing tool: ${latestStep.tool_name}...`;
     }
   }
-  
+
   if (latestStep.kind === "llm_call") {
     return "✍️ Formulating policy-grounded response...";
   }
@@ -43,7 +42,6 @@ const mapRunStepToStatus = (latestStep?: { kind: string; tool_name?: string }): 
 
 export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   user,
-  activeTicket,
   isProcessing,
 }) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -51,7 +49,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       id: "1",
       sender: "pip",
       text: `Hello ${user.full_name.split(" ")[0]}! I'm Pip, your ApexCare HR AI Support Assistant. I'm here to help you search company policies, benefits, and draft ticket replies.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
   const [inputMessage, setInputMessage] = useState("");
@@ -59,6 +57,9 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   const [isBotTalking, setIsBotTalking] = useState(false);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
   const [currentStatusText, setCurrentStatusText] = useState<string>("🧠 Analyzing request...");
+
+  // Transient status override for terminal states ("completed" | "stopped" | "error")
+  const [statusOverride, setStatusOverride] = useState<PipStatusState | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -68,7 +69,11 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     abortControllerRef.current?.abort();
     setIsBotThinking(false);
 
-    // 2. If we have an active run ID, notify the backend to mark it STOPPED in the database
+    // Flash "stopped" state on Pip avatar
+    setStatusOverride("stopped");
+    setTimeout(() => setStatusOverride(null), 3000);
+
+    // 2. If we have an active run ID, notify backend to mark it STOPPED
     if (activeRunId) {
       try {
         const token = localStorage.getItem("apexcare_token");
@@ -116,7 +121,9 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     return () => clearInterval(pollInterval);
   }, [isBotThinking, activeRunId]);
 
+  // Dynamic status mapping for Pip Avatar
   const getPipStatus = (): PipStatusState => {
+    if (statusOverride) return statusOverride;
     if (isProcessing || isBotThinking) return "thinking";
     if (isBotTalking) return "talking";
     return "idle";
@@ -128,7 +135,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     const textToSend = queryText || inputMessage;
     if (!textToSend.trim()) return;
 
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
@@ -140,11 +147,11 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     setChatMessages((prev) => [...prev, userMsg]);
     if (!queryText) setInputMessage("");
     setIsBotThinking(true);
+    setStatusOverride(null);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // Fetch the latest run after a tiny delay so /chat has started and committed the run.
     setTimeout(async () => {
       try {
         const token = localStorage.getItem("apexcare_token");
@@ -182,6 +189,10 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         const data = await res.json();
         answerText = data.reply;
         setActiveRunId(data.run_id);
+
+        // Flash "completed" state with celebration stars briefly upon success!
+        setStatusOverride("completed");
+        setTimeout(() => setStatusOverride(null), 2500);
       } else {
         throw new Error("API call failed");
       }
@@ -190,7 +201,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         id: (Date.now() + 1).toString(),
         sender: "pip",
         text: answerText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
       setChatMessages((prev) => [...prev, botMsg]);
@@ -204,17 +215,24 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     } catch (err: any) {
       setIsBotThinking(false);
       setActiveRunId(null);
+
       if (err.name === "AbortError") {
         const stoppedMsg: ChatMessage = {
           id: Date.now().toString(),
           sender: "system",
           text: "You stopped this response",
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         };
         setChatMessages((prev) => [...prev, stoppedMsg]);
-        setIsBotThinking(false);
+        setStatusOverride("stopped");
+        setTimeout(() => setStatusOverride(null), 3000);
         return;
       }
+
+      // Flash "error" state on failure
+      setStatusOverride("error");
+      setTimeout(() => setStatusOverride(null), 3000);
+
       const lower = textToSend.toLowerCase().trim();
       let answerText = "";
 
@@ -225,7 +243,8 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       } else if (lower.includes("hi") || lower.includes("hello") || lower.includes("hey")) {
         answerText = `Hello ${user.full_name.split(" ")[0]}! Ready to assist. What support ticket or policy inquiry can I help you with today?`;
       } else if (lower.includes("fsa") || lower.includes("wex")) {
-        answerText = "Based on our audited WEX Benefits Policy (wex_benefits_technology_guide.md): Healthcare FSA funds allow up to $640 in unused funds to roll over into 2026. Claims can be submitted via the Wex Mobile app. What shall we tackle next?";
+        answerText =
+          "Based on our audited WEX Benefits Policy (wex_benefits_technology_guide.md): Healthcare FSA funds allow up to $640 in unused funds to roll over into 2026. Claims can be submitted via the Wex Mobile app. What shall we tackle next?";
       } else {
         answerText = `I'm ready to assist with "${textToSend}". Let's get to work—which ticket or policy inquiry shall we review?`;
       }
@@ -234,11 +253,10 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         id: (Date.now() + 1).toString(),
         sender: "pip",
         text: answerText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
       setChatMessages((prev) => [...prev, botMsg]);
-      setIsBotThinking(false);
       setIsBotTalking(true);
 
       setTimeout(() => {
@@ -253,10 +271,11 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         id: "1",
         sender: "pip",
         text: `Hello ${user.full_name.split(" ")[0]}! I'm Pip, your ApexCare HR AI Support Assistant. I'm here to help you search company policies, benefits, and draft ticket replies.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       },
     ]);
     setInputMessage("");
+    setStatusOverride(null);
   };
 
   return (
@@ -281,21 +300,10 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         <button
           onClick={handleNewConversation}
           title="Start New Conversation"
-          className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 transition cursor-pointer flex items-center justify-center shrink-0 border border-slate-200/60 dark:border-slate-700/60"
+          className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 transition cursor-pointer flex items-center justify-center shrink-0 border border-slate-200/60 dark:border-slate-700/60 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 4v16m8-8H4"
-            />
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
         </button>
       </div>
@@ -321,8 +329,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
               return (
                 <div
                   key={msg.id}
-                  className={`flex space-x-2 ${msg.sender === "user" ? "justify-end" : "justify-start"
-                    }`}
+                  className={`flex space-x-2 ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
                 >
                   {msg.sender === "pip" && (
                     <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/30 border border-white/20 mt-0.5">
@@ -356,30 +363,22 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 custom-scrollbar text-[10px]">
               <button
-                onClick={() =>
-                  handleSendChatMessage("What is our WEX FSA rollover limit?")
-                }
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition"
+                onClick={() => handleSendChatMessage("What is our WEX FSA rollover limit?")}
+                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 💬 FSA Policy
               </button>
               <button
-                onClick={() =>
-                  handleSendChatMessage(
-                    "How do employees replace medical ID cards?"
-                  )
-                }
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition"
+                onClick={() => handleSendChatMessage("How do employees replace medical ID cards?")}
+                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 💬 Medical IDs
               </button>
               <button
                 onClick={() =>
-                  handleSendChatMessage(
-                    "How do I report a Qualifying Life Event in Employee Navigator?"
-                  )
+                  handleSendChatMessage("How do I report a Qualifying Life Event in Employee Navigator?")
                 }
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition"
+                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 💬 Life Events
               </button>
@@ -409,7 +408,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                 <button
                   type="button"
                   onClick={handleStopThinking}
-                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs whitespace-nowrap"
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-rose-500"
                 >
                   Stop
                 </button>
@@ -417,7 +416,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                 <button
                   type="submit"
                   disabled={!inputMessage.trim()}
-                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs whitespace-nowrap"
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   Send
                 </button>
