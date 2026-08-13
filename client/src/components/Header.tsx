@@ -71,10 +71,11 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Quick Reseed Button */}
         <button
           onClick={onReseed}
-          title="Reset sample tickets"
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+          title="Clear all audit logs, conversations, and reset sample tickets"
+          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer border border-slate-200 dark:border-slate-700 flex items-center space-x-1.5"
         >
-          🔄 Reseed
+          <span>🔄</span>
+          <span>Reset & Reseed</span>
         </button>
 
         {/* Dark/Light Mode Toggle */}

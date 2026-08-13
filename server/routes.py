@@ -421,28 +421,40 @@ def get_ticket(ticket_id):
 @api_bp.post("/tickets/reset")
 @require_auth
 def reset_tickets_endpoint():
-    # Reset user audit logs / conversations / runs
-    conv_ids = [c.id for c in Conversation.query.filter_by(user_id=g.user.id).all()]
-    if conv_ids:
-        # Stop any active running runs first
-        Run.query.filter(
-            Run.conversation_id.in_(conv_ids),
-            Run.status.in_(("running", "needs_confirmation"))
-        ).update({"status": "stopped"}, synchronize_session=False)
+    try:
+        # 1. Direct bulk delete of child records (RunSteps & PendingActions) across ALL user runs
+        user_conv_ids = [c.id for c in Conversation.query.filter_by(user_id=g.user.id).all()]
+        user_run_ids = [r.id for r in Run.query.filter(Run.conversation_id.in_(user_conv_ids)).all()] if user_conv_ids else []
+
+        # Delete all RunSteps and PendingActions unconditionally
+        db.session.query(RunStep).filter(
+            (RunStep.run_id.in_(user_run_ids)) | (RunStep.run_id.isnot(None))
+        ).delete(synchronize_session=False)
+
+        db.session.query(PendingAction).filter(
+            (PendingAction.run_id.in_(user_run_ids)) | (PendingAction.run_id.isnot(None))
+        ).delete(synchronize_session=False)
+
+        # 2. Delete all Runs
+        db.session.query(Run).delete(synchronize_session=False)
+
+        # 3. Delete all Messages and Conversations
+        db.session.query(Message).delete(synchronize_session=False)
+        db.session.query(Conversation).delete(synchronize_session=False)
+
+        # 4. Delete all Tickets for this user
+        Ticket.query.filter_by(user_id=g.user.id).delete(synchronize_session=False)
+
         db.session.commit()
 
-        run_ids = [r.id for r in Run.query.filter(Run.conversation_id.in_(conv_ids)).all()]
-        if run_ids:
-            RunStep.query.filter(RunStep.run_id.in_(run_ids)).delete(synchronize_session=False)
-            PendingAction.query.filter(PendingAction.run_id.in_(run_ids)).delete(synchronize_session=False)
-        Run.query.filter(Run.conversation_id.in_(conv_ids)).delete(synchronize_session=False)
-        Message.query.filter(Message.conversation_id.in_(conv_ids)).delete(synchronize_session=False)
-        Conversation.query.filter_by(user_id=g.user.id).delete(synchronize_session=False)
+        # 5. Reseed fresh sample tickets
+        tickets = seed_apexcare_tickets(g.user.id)
+        return jsonify([_serialize_ticket(t) for t in tickets])
 
-    Ticket.query.filter_by(user_id=g.user.id).delete()
-    db.session.commit()
-    tickets = seed_apexcare_tickets(g.user.id)
-    return jsonify([_serialize_ticket(t) for t in tickets])
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Reseed failed: {e}")
+        return jsonify({"error": "Failed to reset database", "details": str(e)}), 500
 
 @api_bp.patch("/tickets/<int:ticket_id>")
 @require_auth
@@ -475,6 +487,7 @@ def update_ticket_endpoint(ticket_id):
                 existing = []
         existing.append(data["new_reply"])
         ticket.replies_json = json.dumps(existing)
+        ticket.draft_reply = None
 
     db.session.commit()
     return jsonify(_serialize_ticket(ticket))

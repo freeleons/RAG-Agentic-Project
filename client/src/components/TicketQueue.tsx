@@ -50,7 +50,7 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-slate-900/60 border-r border-slate-200 dark:border-slate-800">
+    <div className="w-full h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
       {/* Queue Header */}
       <div className="p-4 border-b border-slate-200 dark:border-slate-800 space-y-3">
         <div className="flex items-center justify-between">
@@ -93,7 +93,7 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
       </div>
 
       {/* Ticket Cards List */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2 flex flex-col">
         {isLoading ? (
           <div className="p-8 text-center text-xs text-slate-500">Loading tickets...</div>
         ) : filteredTickets.length === 0 ? (

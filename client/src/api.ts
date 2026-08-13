@@ -136,7 +136,7 @@ export async function updateTicket(ticketId: number, updates: Partial<Ticket>): 
 }
 
 export async function reseedTickets(): Promise<Ticket[]> {
-  return apiFetch<Ticket[]>("/api/tickets/seed", {
+  return apiFetch<Ticket[]>("/api/tickets/reset", {
     method: "POST",
   });
 }

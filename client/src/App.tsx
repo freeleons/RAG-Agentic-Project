@@ -18,6 +18,34 @@ import { TicketQueue } from "./components/TicketQueue";
 import { TicketWorkbench } from "./components/TicketWorkbench";
 import { AgentRun, Ticket, UserProfile } from "./types";
 
+export const mapBackendStepToText = (steps: Array<{ kind: string; tool_name?: string }>): string => {
+  if (!steps || steps.length === 0) {
+    return "🧠 Analyzing query intent...";
+  }
+
+  const latest = steps[steps.length - 1];
+
+  if (latest.kind === "tool_call") {
+    switch (latest.tool_name) {
+      case "search_knowledge":
+        return "🔍 Searching audited policy knowledge base...";
+      case "create_draft":
+        return "✍️ Formulating policy-grounded draft response...";
+      case "escalate":
+        return "⚠️ Processing ticket escalation...";
+      default:
+        return `🛠️ Executing ${latest.tool_name}...`;
+    }
+  }
+
+  if (latest.kind === "llm_call") {
+    return "📚 Parsing retrieved documents & reasoning...";
+  }
+
+  return "⚡ Processing agent workflow...";
+};
+
+
 export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem("apexcare_token"));
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -28,52 +56,54 @@ export default function App() {
   const [isLoadingTickets, setIsLoadingTickets] = useState<boolean>(false);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
+  const [auditResetKey, setAuditResetKey] = useState<number>(0);
 
   // Per-ticket triage processing state map
   interface TicketTriageState {
     isProcessing: boolean;
     runId?: number;
-    currentStepIndex: number;
+    statusText?: string;
   }
 
   const [triagingTickets, setTriagingTickets] = useState<Record<number, TicketTriageState>>({});
   const triageAbortControllersRef = React.useRef<Record<number, AbortController>>({});
 
-  const agentSteps = [
-    "🧠 Analyzing query intent...",
-    "🔍 Searching audited policy knowledge base...",
-    "📚 Parsing retrieved documents...",
-    "✍️ Formulating policy-grounded draft response..."
-  ];
-
+  // Polling hook/effect for active runs:
   useEffect(() => {
-    const activeTicketIds = Object.keys(triagingTickets).map(Number).filter(
-      (id) => triagingTickets[id]?.isProcessing
+    const activeEntries = Object.entries(triagingTickets).filter(
+      ([_, state]) => state.isProcessing && state.runId
     );
 
-    if (activeTicketIds.length === 0) return;
+    if (activeEntries.length === 0) return;
 
-    const interval = setInterval(() => {
-      setTriagingTickets((prev) => {
-        const updated = { ...prev };
-        let changed = false;
+    const pollInterval = setInterval(async () => {
+      const token = localStorage.getItem("apexcare_token");
 
-        activeTicketIds.forEach((id) => {
-          const current = updated[id];
-          if (current && current.currentStepIndex < agentSteps.length - 1) {
-            updated[id] = {
-              ...current,
-              currentStepIndex: current.currentStepIndex + 1,
-            };
-            changed = true;
+      for (const [ticketIdStr, state] of activeEntries) {
+        if (!state.runId) continue;
+        try {
+          const res = await fetch(`/api/runs/${state.runId}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const liveText = mapBackendStepToText(data.steps || []);
+
+            setTriagingTickets((prev) => ({
+              ...prev,
+              [Number(ticketIdStr)]: {
+                ...prev[Number(ticketIdStr)],
+                statusText: liveText,
+              },
+            }));
           }
-        });
+        } catch (err) {
+          // Ignore transient poll errors
+        }
+      }
+    }, 700);
 
-        return changed ? updated : prev;
-      });
-    }, 1500);
-
-    return () => clearInterval(interval);
+    return () => clearInterval(pollInterval);
   }, [triagingTickets]);
 
 
@@ -142,7 +172,13 @@ export default function App() {
       setIsLoadingTickets(true);
       const fresh = await reseedTickets();
       setTickets(fresh);
-      if (fresh.length > 0) setSelectedTicket(fresh[0]);
+      if (fresh.length > 0) {
+        setSelectedTicket(fresh[0]);
+      } else {
+        setSelectedTicket(null);
+      }
+      setAuditResetKey((prev) => prev + 1);
+      setTriagingTickets({});
     } catch (err) {
       console.error(err);
     } finally {
@@ -154,7 +190,7 @@ export default function App() {
     setLatestRun(null);
     setTriagingTickets((prev) => ({
       ...prev,
-      [ticket.id]: { isProcessing: true, currentStepIndex: 0 },
+      [ticket.id]: { isProcessing: true, statusText: "🧠 Analyzing query intent..." },
     }));
 
     const controller = new AbortController();
@@ -331,13 +367,13 @@ export default function App() {
           <KnowledgeInspectorModal onClose={() => setActiveView("workbench")} />
         )}
         {activeView === "observability" && (
-          <ObservabilityAuditView onClose={() => setActiveView("workbench")} />
+          <ObservabilityAuditView key={auditResetKey} onClose={() => setActiveView("workbench")} />
         )}
 
         {/* Primary Triage Workbench Layout */}
-        <div className={`flex-1 flex overflow-hidden ${activeView === "workbench" ? "" : "hidden"}`}>
+        <div className={`flex-1 flex flex-row w-full h-full overflow-hidden ${activeView === "workbench" ? "" : "hidden"}`}>
           {/* Left Ticket Queue Sidebar (~30%) */}
-          <div className="w-80 lg:w-96 shrink-0 h-full">
+          <div className="w-80 lg:w-96 shrink-0 h-full overflow-hidden">
             <TicketQueue
               tickets={tickets}
               selectedTicket={selectedTicket}
@@ -348,24 +384,30 @@ export default function App() {
             />
           </div>
 
-          {/* Center Ticket Workbench Panel (~45%) */}
-          <TicketWorkbench
-            ticket={selectedTicket}
-            onRunTriage={handleRunTriage}
-            onStopTriage={handleStopTriage}
-            onUpdateTicketStatus={handleUpdateTicketStatus}
-            onSendReply={handleSendReply}
-            triagingTickets={triagingTickets}
-          />
+          {/* Center Ticket Workbench Panel (~45%) — min-w-0 prevents intrinsic width layout expansion on remount */}
+          <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
+            <TicketWorkbench
+              key={auditResetKey}
+              ticket={selectedTicket || (tickets.length > 0 ? tickets[0] : null)}
+              onRunTriage={handleRunTriage}
+              onStopTriage={handleStopTriage}
+              onUpdateTicketStatus={handleUpdateTicketStatus}
+              onSendReply={handleSendReply}
+              triagingTickets={triagingTickets}
+            />
+          </div>
 
-          {/* Right AI Copilot Assistant & Trace Drawer (~25%) */}
-          <AICopilotWidget
-            user={user}
-            activeTicket={selectedTicket}
-            tickets={tickets}
-            latestRun={latestRun}
-            isProcessing={selectedTicket ? Boolean(triagingTickets[selectedTicket.id]?.isProcessing) : false}
-          />
+          {/* Right AI Copilot Assistant (~25%) — shrink-0 prevents width collapse during center panel re-renders */}
+          <div className="w-80 xl:w-96 shrink-0 h-full overflow-hidden">
+            <AICopilotWidget
+              key={auditResetKey}
+              user={user}
+              activeTicket={selectedTicket}
+              tickets={tickets}
+              latestRun={latestRun}
+              isProcessing={selectedTicket ? Boolean(triagingTickets[selectedTicket.id]?.isProcessing) : false}
+            />
+          </div>
         </div>
       </div>
 
