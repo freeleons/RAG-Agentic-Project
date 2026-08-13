@@ -134,21 +134,7 @@ export default function TicketsPage({
   };
 
   const handleCreate = async () => {
-    if (!newTitle.trim() || !newDesc.trim()) return;
-    try {
-      await api.createTicket({
-        title: newTitle.trim(),
-        description: newDesc.trim(),
-        priority: newPriority,
-        category: newCategory,
-      });
-      setOpenCreate(false);
-      setNewTitle("");
-      setNewDesc("");
-      fetchTickets();
-    } catch (err: any) {
-      setError(err.message || "Failed to create ticket");
-    }
+    setError("Creating tickets is disabled.");
   };
 
   const handleUpdate = async () => {
@@ -166,14 +152,7 @@ export default function TicketsPage({
   };
 
   const handleDelete = async () => {
-    if (deleteId === null) return;
-    try {
-      await api.deleteTicket(deleteId);
-      setDeleteId(null);
-      fetchTickets();
-    } catch (err: any) {
-      setError(err.message || "Failed to delete ticket");
-    }
+    setError("Deleting tickets is disabled.");
   };
 
   return (
