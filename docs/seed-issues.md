@@ -4,8 +4,8 @@ Starter backlog so you're not staring at a blank board on Day 2. Copy the ones y
 
 > Tip: keep issues small enough to finish in a day or less. If an issue needs the word "and," it's probably two issues.
 
-1. **Run AnythingLLM and load the sample docs**
-   - AnythingLLM is reachable at `http://localhost:3001`; a workspace exists with `sample-data/` embedded.
+1. **Run AnythingLLM and load the knowledge base docs**
+   - AnythingLLM is reachable at `http://localhost:3001`; a workspace exists with `knowledge_base/` embedded.
    - A developer API key is created and a test query returns an answer via `curl`.
 
 2. **Scaffold the Flask API skeleton**

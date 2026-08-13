@@ -4,7 +4,7 @@ How we measure whether the agent actually works — not just "it ran once."
 
 ## Our task set
 
-8–10 goals with a known correct outcome. Include **2–3 the agent should NOT be able to complete** (no tool for it, or out of scope) so you can confirm it declines gracefully instead of flailing. Start from goals your `sample-data/` knowledge base can support.
+8–10 goals with a known correct outcome. Include **2–3 the agent should NOT be able to complete** (no tool for it, or out of scope) so you can confirm it declines gracefully instead of flailing. Start from goals your `knowledge_base/` (or `tests/fixtures/sample-data/`) knowledge base can support.
 
 | # | Goal given to the agent | Expected outcome | Should it succeed? |
 |---|-------------------------|------------------|--------------------|

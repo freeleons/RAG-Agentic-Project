@@ -109,7 +109,7 @@ Before anyone clones anything, **one teammate creates the repository your team w
 
 ```bash
 # 0. Start the knowledge service (Project 1) — full guide in docs/anythingllm-setup.md
-#    Runs AnythingLLM at http://localhost:3001. Load the docs in sample-data/,
+#    Runs AnythingLLM at http://localhost:3001. Load the docs in knowledge_base/,
 #    then create a developer API key inside its settings.
 docker run -d -p 3001:3001 \
   -e STORAGE_DIR="/app/server/storage" \
@@ -160,11 +160,15 @@ npm run dev                     # http://localhost:5173
 │   ├── observability.py ← decorator that logs each LLM/tool call
 │   └── tests/
 ├── docs/
-│   ├── anythingllm-setup.md  ← how to run the RAG service (provided)
-│   ├── seed-issues.md        ← starter backlog (provided)
-│   ├── eval.md               ← task-based eval template (provided; fill it in)
-│   └── ARCHITECTURE.md       ← your architecture diagram + decisions
-└── sample-data/         ← docs to load into AnythingLLM (provided)
+│   ├── AGENT_INSTRUCTIONS.md ← system prompts & tool calling instructions
+│   ├── DESIGN_SYSTEM.md     ← UI design system & styling rules
+│   ├── TICKET_SYSTEM.md     ← support triage agent specification
+│   ├── anythingllm-setup.md ← how to run the RAG service (provided)
+│   ├── eval.md              ← task-based eval template (provided; fill it in)
+│   ├── seed-issues.md       ← starter backlog (provided)
+│   └── plans/               ← implementation plans & progress trackers
+├── knowledge_base/          ← docs to load into AnythingLLM (provided)
+└── tests/fixtures/sample-data/ ← legacy test fixture data
 ```
 
 ### Common setup errors
@@ -282,7 +286,7 @@ Record every run in `docs/eval.md` so you can show progress over time — that "
 | Day | Focus | Outcome |
 |-----|-------|---------|
 | 1 | Kickoff, team norms, **create your team repo from this template + protect `main`**, pick project, problem statement | Team repo created with branch protection; roles assigned |
-| 2 | Stand up AnythingLLM, load `sample-data/`, get an API key, explore its API; **start from `docs/seed-issues.md`** | RAG service answers a test query via curl; backlog on the board |
+| 2 | Stand up AnythingLLM, load `knowledge_base/`, get an API key, explore its API; **start from `docs/seed-issues.md`** | RAG service answers a test query via curl; backlog on the board |
 | 3 | Scaffold Flask + React; implement `search_knowledge` calling AnythingLLM | Backend returns a grounded answer from the knowledge service |
 | 4 | First agent loop: model picks `search_knowledge`, calls it, answers (single tool, single step ok) | Goal in → tool call → answer, locally |
 | 5 | Minimal React UI showing the answer **and a basic trace**; CI green | App answers one goal end-to-end, with a visible tool call |

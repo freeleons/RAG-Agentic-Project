@@ -22,7 +22,7 @@ In **Settings → LLM Preference**, choose **Ollama** and the model you pulled (
 ## 3. Create a workspace and load documents
 
 1. Create a workspace named to match `ANYTHINGLLM_WORKSPACE` in your `.env` (e.g. `apprentice-kb`).
-2. Upload the files in [`../sample-data/`](../sample-data) (or your own corpus) and "Save & Embed" them.
+2. Upload the files in [`../knowledge_base/`](../knowledge_base) (or your own corpus) and "Save & Embed" them.
 3. Ask a question in the AnythingLLM UI to confirm retrieval works before you wire up the agent.
 
 ## 4. Create a developer API key
