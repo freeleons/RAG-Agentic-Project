@@ -251,6 +251,30 @@ def get_run(run_id):
     return jsonify(body)
 
 
+@api_bp.post("/runs/<int:run_id>/stop")
+@require_auth
+def stop_run(run_id):
+    run = _owned_run(run_id) or db.session.get(Run, run_id)
+    if not run:
+        return jsonify({"error": "run not found"}), 404
+        
+    run.status = "stopped"
+    
+    # Log a step recording that the run was cancelled by user
+    step_count = RunStep.query.filter_by(run_id=run.id).count() + 1
+    stop_step = RunStep(
+        run_id=run.id,
+        seq=step_count,
+        kind="system_event",
+        result={"event": "user_cancelled", "message": "Execution aborted by user action."}
+    )
+    db.session.add(stop_step)
+    db.session.commit()
+    
+    current_app.logger.info(f"Run #{run.id} explicitly marked as STOPPED.")
+    return jsonify({"success": True, "status": "stopped", "run_id": run.id})
+
+
 def seed_apexcare_tickets(user_id):
     sample_tickets = [
         {
@@ -400,6 +424,13 @@ def reset_tickets_endpoint():
     # Reset user audit logs / conversations / runs
     conv_ids = [c.id for c in Conversation.query.filter_by(user_id=g.user.id).all()]
     if conv_ids:
+        # Stop any active running runs first
+        Run.query.filter(
+            Run.conversation_id.in_(conv_ids),
+            Run.status.in_(("running", "needs_confirmation"))
+        ).update({"status": "stopped"}, synchronize_session=False)
+        db.session.commit()
+
         run_ids = [r.id for r in Run.query.filter(Run.conversation_id.in_(conv_ids)).all()]
         if run_ids:
             RunStep.query.filter(RunStep.run_id.in_(run_ids)).delete(synchronize_session=False)
@@ -488,6 +519,21 @@ def triage_ticket_endpoint(ticket_id):
         outcome = run_agent(run, user_prompt)
     except Exception:
         outcome = {"status": "failed"}
+
+    db.session.refresh(run)
+    if run.status == "stopped" or outcome.get("status") == "stopped":
+        ticket.status = "open"
+        run.status = "stopped"
+        db.session.commit()
+        return jsonify({
+            "ticket": _serialize_ticket(ticket),
+            "run": {
+                "run_id": run.id,
+                "status": "stopped",
+                "answer": "Triage was stopped by the user."
+            },
+            "conversation_id": conv.id
+        }), 499
 
     if outcome.get("status") == "failed":
         current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
@@ -692,6 +738,11 @@ def pip_chat():
         db.session.commit()
         return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
+    db.session.refresh(run)
+    if run.status == "stopped":
+        current_app.logger.info("Chat generation aborted: run status set to stopped.")
+        return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+
     step3 = RunStep(
         run_id=run.id,
         seq=3,
@@ -711,6 +762,11 @@ def pip_chat():
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
             
+        db.session.refresh(run)
+        if run.status == "stopped":
+            current_app.logger.info("Chat generation aborted: run status set to stopped.")
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+
         content = res.get("content") or "I'm ready to assist you. Which ticket or policy question shall we tackle next?"
         
         step3.result = {"content": content}
@@ -722,6 +778,11 @@ def pip_chat():
         if is_client_disconnected():
             run.status = "stopped"
             db.session.commit()
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+            
+        db.session.refresh(run)
+        if run.status == "stopped":
+            current_app.logger.info("Chat generation aborted: run status set to stopped.")
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
             
         # Log the exact failure for your own debugging and telemetry

@@ -1,4 +1,5 @@
 import json
+import time
 
 import requests
 from flask import current_app
@@ -19,18 +20,31 @@ def _endpoint_and_headers():
     return f"{base}/chat/completions", headers
 
 
-def generate(messages, tools):
+def generate(messages, tools, max_retries=3, timeout=120):
     """One model call. Returns {"type": "final", "content": str} or
     {"type": "tool_call", "name": str, "arguments": dict, "call_id": str}."""
     url, headers = _endpoint_and_headers()
     payload = {"model": current_app.config["AGENT_MODEL"], "messages": messages}
     if tools:
         payload["tools"] = tools
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=120)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise LLMError(f"model call failed: {exc}") from exc
+
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            break
+        except (requests.exceptions.Timeout, requests.exceptions.RequestException) as exc:
+            last_exception = exc
+            current_app.logger.warning(
+                f"LLM request attempt {attempt}/{max_retries} failed ({type(exc).__name__}). "
+                f"Retrying in {attempt * 2}s..."
+            )
+            if attempt < max_retries:
+                time.sleep(attempt * 2)  # Exponential backoff
+    else:
+        current_app.logger.error(f"All {max_retries} LLM generation retries exhausted.")
+        raise LLMError(f"model call failed after {max_retries} attempts: {last_exception}") from last_exception
 
     data = resp.json()
     message = data["choices"][0]["message"]

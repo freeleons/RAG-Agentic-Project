@@ -62,6 +62,11 @@ def _next_seq(run):
 
 
 def _finish(run, status, answer):
+    db.session.refresh(run)
+    if run.status == "stopped":
+        current_app.logger.info(f"Run #{run.id} was cancelled mid-flight. Preserving 'stopped' status.")
+        return {"run_id": run.id, "status": "stopped", "answer": "Response stopped by user."}
+
     db.session.add(Message(conversation_id=run.conversation_id, role="assistant", content=answer))
     run.status = status
     run.total_latency_ms = (
@@ -89,6 +94,15 @@ def _loop(run, messages, retried):
             current_app.logger.info(f"Run #{run.id} execution aborted by client disconnect.")
             run.status = "stopped"
             db.session.commit()
+            return {
+                "run_id": run.id,
+                "status": "stopped",
+                "answer": "Execution was stopped by the user."
+            }
+
+        db.session.refresh(run)
+        if run.status == "stopped":
+            current_app.logger.info(f"Run #{run.id} execution aborted by stopped status in DB.")
             return {
                 "run_id": run.id,
                 "status": "stopped",

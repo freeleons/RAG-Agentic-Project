@@ -63,9 +63,23 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  const handleStopThinking = () => {
+  const handleStopThinking = async () => {
+    // 1. Abort the active fetch request
     abortControllerRef.current?.abort();
     setIsBotThinking(false);
+
+    // 2. If we have an active run ID, notify the backend to mark it STOPPED in the database
+    if (activeRunId) {
+      try {
+        const token = localStorage.getItem("apexcare_token");
+        await fetch(`/api/runs/${activeRunId}/stop`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+      } catch (err) {
+        console.error("Failed to notify backend of stopped run:", err);
+      }
+    }
   };
 
   const scrollToBottom = () => {
@@ -129,6 +143,27 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+
+    // Fetch the latest run after a tiny delay so /chat has started and committed the run.
+    setTimeout(async () => {
+      try {
+        const token = localStorage.getItem("apexcare_token");
+        const res = await fetch("/api/runs?page=1&per_page=1", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.runs && data.runs.length > 0) {
+            const latest = data.runs[0];
+            if (latest.status === "running") {
+              setActiveRunId(latest.id);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch active run ID early for chat:", err);
+      }
+    }, 200);
 
     try {
       const token = localStorage.getItem("apexcare_token");

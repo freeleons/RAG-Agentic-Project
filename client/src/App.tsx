@@ -160,6 +160,33 @@ export default function App() {
     const controller = new AbortController();
     triageAbortControllersRef.current[ticket.id] = controller;
 
+    // Fetch the latest run after a tiny delay so /triage has started and committed the run.
+    setTimeout(async () => {
+      try {
+        const token = localStorage.getItem("apexcare_token");
+        const res = await fetch("/api/runs?page=1&per_page=1", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.runs && data.runs.length > 0) {
+            const latest = data.runs[0];
+            if (latest.status === "running") {
+              setTriagingTickets((prev) => {
+                if (!prev[ticket.id]) return prev;
+                return {
+                  ...prev,
+                  [ticket.id]: { ...prev[ticket.id], runId: latest.id },
+                };
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch active run ID early for triage:", err);
+      }
+    }, 200);
+
     try {
       const res = await triageTicket(ticket.id, { signal: controller.signal });
       let runObj = res.run;
@@ -201,7 +228,7 @@ export default function App() {
     }
   };
 
-  const handleStopTriage = (ticketId: number) => {
+  const handleStopTriage = async (ticketId: number) => {
     triageAbortControllersRef.current[ticketId]?.abort();
     setTriagingTickets((prev) => {
       const copy = { ...prev };
@@ -209,6 +236,19 @@ export default function App() {
       return copy;
     });
     delete triageAbortControllersRef.current[ticketId];
+
+    const runId = triagingTickets[ticketId]?.runId || (selectedTicket?.id === ticketId ? latestRun?.run_id : null);
+    if (runId) {
+      try {
+        const token = localStorage.getItem("apexcare_token");
+        await fetch(`/api/runs/${runId}/stop`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+      } catch (err) {
+        console.error("Failed to notify backend of stopped run:", err);
+      }
+    }
   };
 
   const handleUpdateTicketStatus = async (ticketId: number, status: Ticket["status"]) => {

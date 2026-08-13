@@ -188,3 +188,14 @@ def test_get_run_non_admin_cannot_view_other_users_run(client, auth_headers, me)
 
     resp = client.get(f"/api/runs/{other_run.id}", headers=auth_headers)
     assert resp.status_code == 404
+
+
+def test_stop_run_endpoint(client, auth_headers, me):
+    run = _seed_run(me, status="running")
+    resp = client.post(f"/api/runs/{run.id}/stop", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "stopped"
+
+    # Verify run status is updated in the DB
+    db_run = db.session.get(Run, run.id)
+    assert db_run.status == "stopped"
