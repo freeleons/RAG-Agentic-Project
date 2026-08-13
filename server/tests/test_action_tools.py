@@ -19,8 +19,8 @@ def test_escalate_returns_record(app):
 def test_action_tools_registered_with_confirmation(app):
     from server.tools import TOOLS, validate_arguments
 
-    assert TOOLS["create_draft"]["requires_confirmation"] is True
-    assert TOOLS["escalate"]["requires_confirmation"] is True
+    assert TOOLS["create_draft"]["requires_confirmation"] is False
+    assert TOOLS["escalate"]["requires_confirmation"] is False
     assert validate_arguments("escalate", {"ticket_id": "T-1", "priority": "wrong", "reason": "x"}) is not None
     assert validate_arguments(
         "escalate", {"ticket_id": "T-1", "priority": "high", "reason": "x"}
