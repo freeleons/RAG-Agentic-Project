@@ -8,8 +8,10 @@ import type {
   RunStats,
   Ticket,
   TicketFilters,
+  KnowledgeDocument,
+  UserProfile,
+  AgentRun
 } from "./types";
-
 
 export class ApiError extends Error {
   constructor(
@@ -32,12 +34,14 @@ export function setOnUnauthorized(handler: (() => void) | null) {
   onUnauthorized = handler;
 }
 
+
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string> | undefined),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const activeToken = token || localStorage.getItem("apexcare_token");
+  if (activeToken) headers["Authorization"] = `Bearer ${activeToken}`;
   const resp = await fetch(path, { ...options, headers });
   let body: unknown = null;
   try {
@@ -68,22 +72,128 @@ function runQuery(filters: RunFilters, includePage: boolean): string {
   return s ? `?${s}` : "";
 }
 
+// Individual named exports for Tailwind components
+export async function login(email: string, password: string): Promise<{ token: string; user: UserProfile }> {
+  const data = await apiFetch<{ token: string; id: number; email: string; full_name: string; department: string; role_title: string; is_admin?: boolean }>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  const user: UserProfile = {
+    id: data.id,
+    email: data.email,
+    full_name: data.full_name,
+    department: data.department,
+    role_title: data.role_title,
+    is_admin: data.is_admin,
+  };
+  return { token: data.token, user };
+}
+
+export async function register(data: {
+  email: string;
+  password: string;
+  full_name: string;
+  department: string;
+  role_title: string;
+}): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getCurrentUser(): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/me");
+}
+
+export async function fetchTickets(params?: {
+  status?: string;
+  priority?: string;
+  category?: string;
+  q?: string;
+}): Promise<Ticket[]> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.priority) query.set("priority", params.priority);
+  if (params?.category) query.set("category", params.category);
+  if (params?.q) query.set("q", params.q);
+
+  return apiFetch<Ticket[]>(`/api/tickets?${query.toString()}`);
+}
+
+export async function createTicket(ticketData: Partial<Ticket>): Promise<Ticket> {
+  return apiFetch<Ticket>("/api/tickets", {
+    method: "POST",
+    body: JSON.stringify(ticketData),
+  });
+}
+
+export async function updateTicket(ticketId: number, updates: Partial<Ticket>): Promise<Ticket> {
+  return apiFetch<Ticket>(`/api/tickets/${ticketId}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function reseedTickets(): Promise<Ticket[]> {
+  return apiFetch<Ticket[]>("/api/tickets/reset", {
+    method: "POST",
+  });
+}
+
+export async function triageTicket(ticketId: number, options?: RequestInit): Promise<{
+  ticket: Ticket;
+  run: AgentRun;
+  conversation_id: number;
+}> {
+  return apiFetch<{ ticket: Ticket; run: AgentRun; conversation_id: number }>(`/api/tickets/${ticketId}/triage`, {
+    method: "POST",
+    ...options
+  });
+}
+
+export async function approvePendingAction(runId: number): Promise<AgentRun> {
+  return apiFetch<AgentRun>(`/api/runs/${runId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ approved: true }),
+  });
+}
+
+export async function rejectPendingAction(runId: number): Promise<AgentRun> {
+  return apiFetch<AgentRun>(`/api/runs/${runId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ approved: false }),
+  });
+}
+
+export async function fetchRunDetails(runId: number): Promise<{ run: any; steps: any[] }> {
+  return apiFetch<{ run: any; steps: any[] }>(`/api/runs/${runId}`);
+}
+
+export async function fetchAllRunAudits(): Promise<any[]> {
+  const res = await apiFetch<{ runs: any[] }>("/api/runs");
+  return res.runs || [];
+}
+
+export async function fetchRunStats(): Promise<any> {
+  return apiFetch<any>("/api/runs/stats");
+}
+
+export async function fetchKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  return apiFetch<KnowledgeDocument[]>("/api/knowledge-base");
+}
+
+// Default export api object for legacy/MUI components
 export const api = {
-  register: (email: string, password: string) =>
-    apiFetch<{ id: number; email: string }>("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    }),
-  login: (email: string, password: string) =>
-    apiFetch<{ token: string; email?: string; is_admin?: boolean }>("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    }),
+  register: (email: string, password: string) => register({ email, password, full_name: "", department: "", role_title: "" }),
+  login: async (email: string, password: string) => {
+    const res = await login(email, password);
+    return { token: res.token, email: res.user.email, is_admin: res.user.is_admin };
+  },
   listConversations: (q?: string) =>
     apiFetch<Conversation[]>(
       q ? `/api/conversations?q=${encodeURIComponent(q)}` : "/api/conversations"
     ),
-
   createConversation: (title?: string) =>
     apiFetch<{ id: number; title: string }>("/api/conversations", {
       method: "POST",
@@ -112,7 +222,6 @@ export const api = {
       body: JSON.stringify({ approved }),
       signal,
     }),
-
   getRun: (runId: number) => apiFetch<RunDetail>(`/api/runs/${runId}`),
   listRuns: (filters: RunFilters) =>
     apiFetch<RunsPage>(`/api/runs${runQuery(filters, true)}`),
@@ -128,17 +237,12 @@ export const api = {
     return apiFetch<Ticket[]>(qs ? `/api/tickets?${qs}` : "/api/tickets");
   },
   createTicket: (data: { title: string; description: string; priority?: string; category?: string }) =>
-    apiFetch<Ticket>("/api/tickets", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
+    createTicket(data),
   updateTicket: (ticketId: number, data: Partial<Ticket>) =>
-    apiFetch<Ticket>(`/api/tickets/${ticketId}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+    updateTicket(ticketId, data),
   deleteTicket: (ticketId: number) =>
     apiFetch<{ success: boolean }>(`/api/tickets/${ticketId}`, {
       method: "DELETE",
     }),
 };
+

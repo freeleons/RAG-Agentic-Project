@@ -22,7 +22,7 @@ In **Settings → LLM Preference**, choose **Ollama** and the model you pulled (
 ## 3. Create a workspace and load documents
 
 1. Create a workspace named to match `ANYTHINGLLM_WORKSPACE` in your `.env` (e.g. `apprentice-kb`).
-2. Upload the files in [`../sample-data/`](../sample-data) (or your own corpus) and "Save & Embed" them.
+2. Upload the files in [`../knowledge_base/`](../knowledge_base) (or your own corpus) and "Save & Embed" them.
 3. Ask a question in the AnythingLLM UI to confirm retrieval works before you wire up the agent.
 
 ## 4. Create a developer API key
@@ -43,3 +43,10 @@ curl -X POST http://localhost:3001/api/v1/workspace/apprentice-kb/chat \
 You should get back an answer plus source references. **Check the live API reference for the exact path, request body, and response shape** — wrap whatever you find in your `search_knowledge(query)` function so the rest of your agent doesn't care about the details.
 
 > Treat the response shape as something to *verify*, not assume — read the actual JSON once and build your parser around it.
+
+## 6. Optimize Fast No-Match Fallback
+
+To prevent AnythingLLM from stalling when information is absent from your documents:
+1. In **Workspace Settings → Chat Settings → Workspace System Prompt**, configure:
+   > *"Given the following context, answer the user query strictly using the provided documents. If the information is not explicitly found in the retrieved documents, reply immediately with 'NO_POLICY_MATCH: Information not found in policy documents.' Do not attempt to guess or hallucinate."*
+2. In `search_knowledge.py`, the agent automatically appends a `NO_POLICY_MATCH` instruction to queries, allowing Pip to trigger immediate Tier-2 escalation without delay.

@@ -33,6 +33,12 @@ def create_app(test_config=None):
                     with db.engine.connect() as conn:
                         conn.execute(text("ALTER TABLE conversations ADD COLUMN updated_at DATETIME"))
                         conn.commit()
+            if "tickets" in inspector.get_table_names():
+                t_cols = [c["name"] for c in inspector.get_columns("tickets")]
+                if "replies_json" not in t_cols:
+                    with db.engine.connect() as conn:
+                        conn.execute(text("ALTER TABLE tickets ADD COLUMN replies_json TEXT"))
+                        conn.commit()
         except Exception:
             pass
 

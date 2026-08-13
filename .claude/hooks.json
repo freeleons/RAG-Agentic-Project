@@ -16,6 +16,7 @@
         "hooks": [
           {
             "type": "command",
+            
             "command": "mkdir -p ./notes && echo \"$(date -u +'%Y-%m-%dT%H:%M:%SZ') READ $TOOL_FILE\" >> ./notes/exploration-log.txt"
           }
         ]
