@@ -42,7 +42,7 @@ export const KnowledgeInspectorModal: React.FC<KnowledgeInspectorModalProps> = (
         </div>
         <button
           onClick={onClose}
-          className="px-3.5 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold transition cursor-pointer"
+          className="px-3.5 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           Return to Workbench ✕
         </button>

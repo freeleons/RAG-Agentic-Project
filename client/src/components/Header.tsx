@@ -39,7 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center space-x-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
         <button
           onClick={() => setActiveView("workbench")}
-          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${activeView === "workbench"
+          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${activeView === "workbench"
               ? "bg-blue-600 text-white shadow-sm"
               : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
@@ -48,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveView("knowledge")}
-          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${activeView === "knowledge"
+          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${activeView === "knowledge"
               ? "bg-blue-600 text-white shadow-sm"
               : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
@@ -57,7 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveView("observability")}
-          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${activeView === "observability"
+          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${activeView === "observability"
               ? "bg-blue-600 text-white shadow-sm"
               : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
@@ -72,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={onReseed}
           title="Clear all audit logs, conversations, and reset sample tickets"
-          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer border border-slate-200 dark:border-slate-700 flex items-center space-x-1.5"
+          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer border border-slate-200 dark:border-slate-700 flex items-center space-x-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <span>🔄</span>
           <span>Reset & Reseed</span>
@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Dark/Light Mode Toggle */}
         <button
           onClick={() => setDarkMode(!darkMode)}
-          className="p-1.5 rounded-lg text-slate-700 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+          className="p-1.5 rounded-lg text-slate-700 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
           title="Toggle Theme"
         >
           {darkMode ? "☀️" : "🌙"}
@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Logout */}
         <button
           onClick={onLogout}
-          className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+          className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           Logout
         </button>
