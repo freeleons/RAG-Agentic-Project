@@ -1,4 +1,4 @@
-# Enterprise Support Triage Agent & RAG Knowledge Service
+# ApexCare: Enterprise Support Triage Agent & RAG Knowledge Service
 
 [![CI Build](https://img.shields.io/github/actions/workflow/status/freeleons/RAG-Agentic-Project/ci.yml?branch=main&style=for-the-badge&logo=github)](https://github.com/freeleons/RAG-Agentic-Project/actions)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python)](https://python.org)
@@ -7,88 +7,69 @@
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL_16-336791?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
 
-> A production-grade **Autonomous AI Support Triage Agent** built with Python/Flask and React (TypeScript). Features a custom **bounded reasoning loop**, **Human-in-the-Loop (HITL) execution safety**, **prompt injection defense**, an integrated **RAG vector knowledge service** (AnythingLLM API), and comprehensive **per-step system observability & analytics**.
+> **ApexCare** is a production-grade, multi-tenant **Autonomous AI Support Triage Agent** and **RAG Knowledge Service** designed to assist enterprise HR and IT operations. Built from first principles using Python/Flask and React (TypeScript), it implements a customized **bounded reasoning loop**, **stateful Human-in-the-Loop (HITL) execution safety**, **prompt injection defense boundaries**, and a decorator-driven **observability & analytics system** to deliver auditability at scale.
 
 ---
 
 ## 🎥 Demos & Visual Showcase
 
-<!-- PLACEHOLDER: 60-Second Video Demo / GIF -->
-<!-- Recommend placing a 60-second video demo or GIF here showing the live agent loop, step trace panel, and HITL confirmation modal -->
-> [!NOTE]
-> **Live Interactive Demo:** [https://agent-demo.example.com](https://agent-demo.example.com)  *(Replace with live deployment link)*
-> **1-Minute Loom Walkthrough:** [Watch Video Demo](https://loom.com/share/placeholder)
+> [!TIP]
+> **Core Concept:** Rather than leaving the support specialist in a generic chat interface, ApexCare introduces a unified **Ticket Triage Workbench** dashboard. The agent acts as an embedded assistant directly grounding replies with policy retrieval, compiling draft responses, and routing escalations, with every reasoning step audited and trace-logged.
 
-### 📸 UI Screenshots
-
+### 📸 Triage Workbench Interface
 <div align="center">
+  <img src="./docs/images/chat-trace-screenshot.png" alt="Chat & Agent Trace Panel" width="90%" style="border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);" />
+  <p><i>The central Triage Workbench view with live sidebar tickets, active workbench details, and the collapsible AI Copilot widget on the right.</i></p>
+</div>
 
-<!-- PLACEHOLDER: Main Chat Interface & Agent Trace Panel -->
-<!--
-  IMAGE REQUIREMENT: Upload screenshot of Chat Interface with open Agent Trace Panel showing step-by-step reasoning.
-  File path: docs/images/chat-trace-screenshot.png
--->
-> **Chat Interface & Real-time Agent Trace Panel**
->
-> *(Place screenshot `chat-trace-screenshot.png` here: Shows user goal, step-by-step tool execution, latency, and reasoning trace)*
->
-> `![Chat & Agent Trace Panel](./docs/images/chat-trace-screenshot.png)`
-
-<br/>
-
-<!-- PLACEHOLDER: Observability & Audit Dashboard -->
-<!--
-  IMAGE REQUIREMENT: Upload screenshot of Audit Dashboard showing token metrics, latency charts, and run filters.
-  File path: docs/images/audit-dashboard-screenshot.png
--->
-> **System Observability & Audit Analytics Dashboard**
->
-> *(Place screenshot `audit-dashboard-screenshot.png` here: Shows run stats, token consumption, latency breakdowns, and admin audit trail)*
->
-> `![Observability & Audit Dashboard](./docs/images/audit-dashboard-screenshot.png)`
-
+### 📸 System Analytics & Observability Dashboard
+<div align="center">
+  <img src="./docs/images/audit-dashboard-screenshot.png" alt="Observability & Audit Dashboard" width="90%" style="border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);" />
+  <p><i>The Admin Observability panel displaying token consumption trends, average step latencies, failure rates, and step-by-step telemetry traces.</i></p>
 </div>
 
 ---
 
 ## 🏗️ System Architecture
 
-The application is architected as two decoupled systems: a **RAG Knowledge Service** and a **Bounded Agent Backend** with an interactive **React UI**.
+The application is structured into decoupled, stateless service layers backed by a PostgreSQL database and connected to AnythingLLM via a REST vector index connector:
 
 ```mermaid
 flowchart TD
     subgraph Client ["Client Layer (React + Vite + TS)"]
-        UI["Chat Interface & Trace Panel"]
-        AuditUI["Audit & Analytics Dashboard"]
+        UI["Triage Workbench\n(Sidebar Queue + Central Editor)"]
+        Copilot["AICopilotWidget\n(Handbook Policy Q&A Widget)"]
+        AuditUI["Observability Dashboard\n(Token Metrics + Traces)"]
     end
 
     subgraph Backend ["Agent Engine Layer (Flask + SQLAlchemy)"]
-        API["REST API Routes\n(/api/conversations, /api/runs)"]
-        Guard["Guardrail Validator\n(Max Steps, HITL, Schema Check)"]
-        Engine["Agent Reasoning Loop\n(server/agent.py)"]
-        LLM_Adapter["Model Adapter Interface\n(generate: Ollama / OpenAI API)"]
-        Obs["Observability Logger\n(server/observability.py)"]
+        API["REST API Endpoints\n(/api/tickets, /api/chat, /api/runs)"]
+        Guard["Guardrail Validator\n(HITL Guard, Timeout, Schema Validator)"]
+        Engine["Agent Bounded Loop\n(server/agent.py decide-act-observe)"]
+        LLM_Adapter["LLM Provider Interface\n(Ollama / OpenAI API Adapter)"]
+        Obs["Observability Logger\n(server/observability.py decorator)"]
     end
 
     subgraph Data ["Data & Storage Layer"]
-        PG[("PostgreSQL\n(Users, Runs, RunSteps, Tickets)")]
+        PG[("PostgreSQL Database\n(Users, Runs, RunSteps, Tickets)")]
     end
 
-    subgraph Services ["External & Tool Services"]
-        KB["RAG Knowledge Service\n(AnythingLLM API / Vector DB)"]
-        Tools["Helpdesk Tools\n(Create / List / Update Tickets)"]
+    subgraph Services ["External Services & Tools"]
+        KB["AnythingLLM Vector DB\n(RAG Policy Knowledge Service)"]
+        Tools["Helpdesk Actions\n(list_tickets, update_ticket, escalate)"]
     end
 
-    UI -->|1. User Goal / Action Approval| API
-    AuditUI -->|View Run Logs & Stats| API
+    UI -->|User action approval / patch| API
+    Copilot -->|Direct message query| API
+    AuditUI -->|View real-time trace telemetry| API
     API --> Guard
     Guard --> Engine
-    Engine <-->|2. Generate Next Action| LLM_Adapter
-    Engine -->|3. Record Step Metrics| Obs
-    Obs -->|Write Traces & Latency| PG
-    Engine -->|4. Execute Search Tool| KB
-    Engine -->|5. Execute Ticket Action| Tools
-    Engine -->|6. Require HITL Confirmation| API
+    Engine <-->|Next Action Inference| LLM_Adapter
+    Engine -->|Record execution step| Obs
+    Obs -->|Write step latencies & logs| PG
+    Engine -->|Execute RAG fetch| KB
+    Engine -->|Execute ticket updates| Tools
+    Engine -->|Stateful suspension| API
 ```
 
 ---
@@ -96,60 +77,58 @@ flowchart TD
 ## 🌟 Key Engineering Highlights
 
 ### 1. Custom Bounded Agent Loop (No Framework Lock-in)
-* Built from first principles in `server/agent.py` without heavy black-box frameworks (e.g. LangChain / AutoGen).
-* Implements a deterministic `Decide → Act → Observe → Repeat` loop bounded by strict step caps (`MAX_AGENT_STEPS`).
-* Delivers complete transparency and fine-grained control over model prompts, execution flow, and state transitions.
+* **First-Principles Design:** Built directly in [`server/agent.py`](file:///Users/daniel/code/flatiron/RAG-Agentic-Project/server/agent.py) without heavy black-box orchestrators (e.g. LangChain or AutoGen) to ensure complete transparency.
+* **Deterministic Bounds:** Governed by strict step limits (`MAX_AGENT_STEPS = 6`) and tool timeouts (`TOOL_TIMEOUT_SECONDS = 30`) to prevent runaway recursive reasoning loops, hallucinated cycles, or API cost overruns.
+* **Schema Validation & Self-Correction:** Model tool calls are checked against JSON schemas before execution. Schema mismatches trigger a structured error response back to the agent with a 1-retry self-correction cap.
 
-### 2. Production Guardrails & Human-in-the-Loop (HITL)
-* **Consequential Action Safety:** Any action marked with `requires_confirmation` (e.g., ticket creation or escalation) automatically halts the agent loop and enters a `needs_confirmation` state.
-* **State Resumption:** User approvals or rejections are stored as `PendingAction` records, allowing the loop to cleanly resume or gracefully pivot based on user decision.
-* **Argument Validation & Retry:** Malformed tool arguments are validated against schemas (`server/tools/`); the agent receives a specific correction feedback message with a 1-retry cap before failing safely.
+### 2. Human-in-the-Loop (HITL) Execution Safety
+* **Consequential Actions Guarded:** Critical actions (like writing ticket drafts or routing escalations) are marked as `requires_confirmation = True`. 
+* **Stateful Resumption:** On identifying a consequential action, the loop halts, saves its state to database logs as a `PendingAction`, and enters a `needs_confirmation` status. It resumes cleanly once the support specialist clicks approve or reject in the UI.
 
-### 3. Enterprise Observability & Auditability
-* **Per-Step Metrics:** Decorator-driven telemetry (`server/observability.py`) records prompt tokens, completion tokens, execution latency (ms), tool arguments, and raw LLM message histories into PostgreSQL (`RunStep` model).
-* **Audit Dashboard:** Full React analytical view showing token consumption trends, average step latencies, run failure rates, and admin inspection tools.
+### 3. Decoupled RAG Knowledge Integration
+* Implements a vector-index retrieval query via AnythingLLM API behind a clean `search_knowledge` tool interface. This decouples the core reasoning engine from vendor-specific vector store architectures.
 
-### 4. Enterprise Knowledge RAG Integration
-* Decoupled vector retrieval via AnythingLLM API behind a clean `search_knowledge(query)` abstraction.
-* Protects the core agent engine from vector database vendor lock-in.
+### 4. Telemetry & Analytics Dashboard
+* **Decorator Telemetry:** Logging decorators in [`server/observability.py`](file:///Users/daniel/code/flatiron/RAG-Agentic-Project/server/observability.py) capture completion/prompt tokens, model info, execution latency (in milliseconds), tool parameters, and raw JSON logs.
+* **Analytical UI:** The Audit Dashboard visualizes token volume trends, failure statistics, trace trees, and latency buckets (20%, 50%, 90% latency percentiles).
 
 ---
 
 ## 🛡️ AI Safety & Prompt Injection Protection
 
-| Defense Mechanism | Implementation Strategy |
+| Protection Layer | Strategy |
 | :--- | :--- |
-| **Data/Instruction Boundary** | Tool responses are wrapped inside `<tool_result>` XML tags. System prompts instruct the LLM to treat content within these boundaries purely as untrusted data. |
-| **Bounded Step Limit** | Enforces `MAX_AGENT_STEPS` (default: 6) to prevent infinite loops, hallucinated recursion, or API cost overruns. |
-| **Tool Timeout Safety** | Tool invocations execute with explicit timeout limits (`TOOL_TIMEOUT_SECONDS`). |
-| **Scoped Auth Permissions** | Multi-tenant user session authentication; users can only access their own conversations, runs, and tickets. |
+| **XML Data Isolation** | Retrieval and tool responses are wrapped inside `<tool_result>` XML tags. The system prompt instructs the agent to treat this content strictly as untrusted data, neutralizing instructions inside documents. |
+| **Strict Read-Only Queue** | Ticket queue operations are read-only from the user interface; ticket creation and deletion are disabled to preserve the queue as a strict, un-compromised system of record. |
+| **Session Isolation** | Token-based session authentication separates workspaces; users are partitioned and cannot access or audit runs from other specialists. |
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology | Primary Role |
+| Component | Technology | Role |
 | :--- | :--- | :--- |
-| **Frontend** | React 18, TypeScript, Vite, TailwindCSS | Chat UI, real-time agent trace visualization, audit dashboard |
-| **Backend** | Python 3.11+, Flask, SQLAlchemy | Agent reasoning loop, tool router, state management, REST endpoints |
-| **Database** | PostgreSQL 16 / SQLite | Persistence for users, sessions, runs, observability steps, and tickets |
-| **LLM Provider** | Ollama (`llama3.1:8b`) / OpenAI API | Tool-calling reasoning engine (swappable via `llm.py` adapter) |
-| **Knowledge Service** | AnythingLLM (Docker) | Vector index, document retrieval & RAG API service |
-| **Testing & CI** | Pytest, Vitest, GitHub Actions | Automated unit/integration testing on every PR |
+| **Frontend** | React 18, TypeScript, Vite, Vanilla CSS | Dashboard UI, trace panel, audit graphs |
+| **Backend** | Python 3.11+, Flask, SQLAlchemy | Bounded reasoning loop, tool router, state management, REST endpoints |
+| **Database** | PostgreSQL 16 / SQLite | Run logs, users, runs, steps, and tickets |
+| **LLM Provider** | Ollama (`llama3.1:8b`) / OpenAI | Swap reasoning models via a unified LLM interface |
+| **Knowledge Engine** | AnythingLLM (Dockerized) | Vector database, semantic retrieval, indexing |
+| **Testing** | Pytest, Vitest | Parallel unit & integration testing |
 
 ---
 
 ## 🚀 Quick Start & Installation
 
 ### Prerequisites
-* **Docker** (for AnythingLLM & Postgres)
-* **Python 3.11+** & `venv`
+* **Docker** (for Postgres and AnythingLLM)
+* **Python 3.11+**
 * **Node.js 18+** & `npm`
-* **Ollama** (for local model inference)
+* **Ollama** (for local reasoning model execution)
 
-### 1. Start the RAG Knowledge Service & Database
+### 1. Spin up Services (Docker)
 ```bash
 # 1. Spin up AnythingLLM RAG Service (Port 3001)
+#    Create a developer API key inside AnythingLLM settings once active.
 docker run -d -p 3001:3001 \
   -e STORAGE_DIR="/app/server/storage" \
   -v anythingllm_storage:/app/server/storage \
@@ -163,15 +142,15 @@ docker run -d -p 5432:5432 \
   --name agentdb postgres:16
 ```
 
-### 2. Configure Environment & Model
+### 2. Configure Environment
 ```bash
-# Pull local reasoning model via Ollama
+# Download the local reasoning model via Ollama
 ollama serve
 ollama pull llama3.1:8b
 
-# Copy environment template
+# Setup environment variables
 cp .env.example .env
-# Edit .env with your ANYTHINGLLM_API_KEY and DATABASE_URL
+# Edit .env with your ANYTHINGLLM_API_KEY, ANYTHINGLLM_WORKSPACE, and DATABASE_URL
 ```
 
 ### 3. Backend Setup (Flask API)
@@ -180,10 +159,10 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
+# Install requirements
 pip install -r server/requirements.txt
 
-# Run database migrations & start backend server (Port 5000)
+# Run migrations and start backend API (Port 5000)
 flask --app server.app db upgrade
 flask --app server.app run --debug
 ```
@@ -197,60 +176,26 @@ npm run dev # Launches at http://localhost:5173
 
 ---
 
-## 🧪 Testing & CI/CD Pipeline
+## 🧪 Testing & Validation
 
-The project enforces strict testing standards with automated CI checking on every pull request.
+Automated testing enforces code validity on both ends before merge pipelines execute.
 
 ```bash
-# Run backend test suite (Pytest)
-python -m pytest server/tests -v
+# Run backend python unit/integration tests
+.venv/bin/pytest
 
-# Run single test module
-python -m pytest server/tests/test_agent.py -v
-
-# Run frontend test suite (Vitest)
+# Run frontend UI tests
 cd client
 npm test -- --run
-```
-
-### CI Pipeline Features (`.github/workflows/ci.yml`)
-* Automated Python & Node.js environment setups.
-* Parallel test execution for backend (`pytest`) and frontend (`vitest`).
-* Production build verification (`npm run build`).
-
----
-
-## 📁 Repository Structure
-
-```
-.
-├── .github/workflows/   # GitHub Actions CI/CD pipelines
-├── client/              # React (Vite + TypeScript) Frontend
-│   ├── src/
-│   │   ├── audit/       # Analytics dashboard & run metrics components
-│   │   ├── auth/        # Login/register modals & auth context
-│   │   ├── chat/        # Main chat interface & prompt starters
-│   │   ├── tickets/     # Helpdesk ticket management views
-│   │   └── trace/       # Real-time agent step trace panel
-├── server/              # Flask Backend & Agent Core
-│   ├── agent.py         # Bounded reasoning loop & HITL engine
-│   ├── llm.py           # Unified model generator adapter
-│   ├── models.py        # SQLAlchemy schema (User, Run, RunStep, Ticket)
-│   ├── observability.py # Telemetry decorator for latency/token tracking
-│   ├── routes.py        # REST API endpoints & admin audit routes
-│   ├── tools/           # Modular tool definitions (RAG search, tickets)
-│   └── tests/           # Unit & integration pytest suite
-├── docs/                # Design specifications, specs, and architecture docs
-└── sample-data/         # Knowledge base document samples for RAG seeding
 ```
 
 ---
 
 ## 📄 License & Contact
 
-This project is licensed under the **MIT License**.
+Distributed under the **MIT License**.
 
-Designed & built by **Apprentice Team / Developer** as a demonstration of production AI systems engineering.
+Designed & built by **Developer / AI Engineer** demonstrating production AI systems engineering.
 
 * **Email:** developer@example.com *(Replace with your email)*
 * **LinkedIn:** [linkedin.com/in/yourprofile](https://linkedin.com/in/yourprofile) *(Replace with your profile)*
