@@ -109,6 +109,10 @@ TOOLS = {
                 },
                 "title": {"type": "string", "description": "Updated title."},
                 "description": {"type": "string", "description": "Updated description."},
+                "resolution_notes": {
+                    "type": "string",
+                    "description": "How the ticket was resolved. Provide when marking a ticket resolved so future lookups can reuse this fix.",
+                },
             },
             "required": ["ticket_id"],
         },

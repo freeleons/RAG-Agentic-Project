@@ -84,6 +84,8 @@ class Ticket(db.Model):
     status = db.Column(db.String(20), nullable=False, default="open")
     priority = db.Column(db.String(20), nullable=False, default="medium")
     category = db.Column(db.String(50), nullable=False, default="General")
+    resolution_notes = db.Column(db.Text)
+    kb_synced_at = db.Column(db.DateTime(timezone=True))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

@@ -431,6 +431,7 @@ def get_tickets():
                 "status": t.status,
                 "priority": t.priority,
                 "category": t.category,
+                "resolution_notes": t.resolution_notes,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "updated_at": t.updated_at.isoformat() if t.updated_at else None,
             }
@@ -495,6 +496,8 @@ def update_ticket_endpoint(ticket_id):
         ticket.priority = data["priority"]
     if "category" in data:
         ticket.category = data["category"]
+    if "resolution_notes" in data and data["resolution_notes"].strip():
+        ticket.resolution_notes = data["resolution_notes"].strip()
 
     db.session.commit()
     return jsonify(
@@ -505,6 +508,7 @@ def update_ticket_endpoint(ticket_id):
             "status": ticket.status,
             "priority": ticket.priority,
             "category": ticket.category,
+            "resolution_notes": ticket.resolution_notes,
             "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,
         }
     )
