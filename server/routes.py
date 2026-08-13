@@ -11,6 +11,7 @@ from server.models import Conversation, Message, PendingAction, Run, RunStep, Ti
 from server.observability import record_step
 from server.tools import create_draft
 from server.tools.search_knowledge import search_knowledge
+from server.utils import is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
     PIP_CLASSIFICATION_PROMPT,
@@ -111,7 +112,7 @@ def run_stats():
     for _, status, _, _ in runs:
         by_status[status] = by_status.get(status, 0) + 1
     completed = by_status.get("completed", 0)
-    terminal = completed + by_status.get("failed", 0) + by_status.get("declined", 0)
+    terminal = completed + by_status.get("failed", 0) + by_status.get("stopped", 0)
     success_rate = (completed / terminal) if terminal else None
 
     total_steps = 0
@@ -142,7 +143,7 @@ def run_stats():
     for _, status, created_at, _ in runs:
         day = created_at.date().isoformat()
         counts = per_day.setdefault(
-            day, {"completed": 0, "failed": 0, "declined": 0, "needs_confirmation": 0}
+            day, {"completed": 0, "failed": 0, "stopped": 0, "running": 0}
         )
         if status in counts:
             counts[status] += 1
@@ -605,7 +606,35 @@ def pip_chat():
 
     tickets_context = f"\n\nCURRENT_ACTIVE_TICKETS:\n{json.dumps(tickets_summary, indent=2)}"
 
+    conv = Conversation.query.filter_by(user_id=g.user.id).first()
+    if not conv:
+        conv = Conversation(user_id=g.user.id, title="Pip Chat")
+        db.session.add(conv)
+        db.session.commit()
+    
+    msg = Message(conversation_id=conv.id, role="user", content=message_text)
+    db.session.add(msg)
+    db.session.commit()
+
+    run = Run(
+        conversation_id=conv.id,
+        user_message_id=msg.id,
+        status="running",
+        model=current_app.config["AGENT_MODEL"],
+    )
+    db.session.add(run)
+    db.session.commit()
+
     # Step 0.5: Classify query to see if it needs knowledge base search
+    step1 = RunStep(
+        run_id=run.id,
+        seq=1,
+        kind="llm_call",
+        result={"status": "classifying"}
+    )
+    db.session.add(step1)
+    db.session.commit()
+
     needs_kb = True
     try:
         classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
@@ -613,21 +642,37 @@ def pip_chat():
         class_content = (class_res.get("content") or "").strip().upper()
         if "NO" in class_content and "YES" not in class_content:
             needs_kb = False
-    except Exception:
-        pass
+        step1.result = {"status": "classified", "needs_kb": needs_kb}
+        db.session.commit()
+    except Exception as e:
+        step1.result = {"error": str(e)}
+        db.session.commit()
 
     # Step 1: Knowledge Search
     kb_context = ""
     no_policy_match = False
     if needs_kb:
+        step2 = RunStep(
+            run_id=run.id,
+            seq=2,
+            kind="tool_call",
+            tool_name="search_knowledge",
+            arguments={"query": message_text},
+            result={"status": "searching"}
+        )
+        db.session.add(step2)
+        db.session.commit()
         try:
             kb_result = search_knowledge(message_text)
             if kb_result and "error" not in str(kb_result):
                 kb_context = f"\n\nAUDITED_POLICY_KNOWLEDGE_RESULT:\n{json.dumps(kb_result)}"
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
-        except Exception:
-            pass
+            step2.result = kb_result
+            db.session.commit()
+        except Exception as e:
+            step2.result = {"error": str(e)}
+            db.session.commit()
     else:
         # If knowledge search was skipped because query is playful/off-topic, treat it as no policy match
         no_policy_match = True
@@ -641,14 +686,51 @@ def pip_chat():
         {"role": "user", "content": message_text}
     ]
 
+    if is_client_disconnected():
+        current_app.logger.info("Chat generation aborted: client disconnected.")
+        run.status = "stopped"
+        db.session.commit()
+        return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+
+    step3 = RunStep(
+        run_id=run.id,
+        seq=3,
+        kind="llm_call",
+        result={"status": "formulating"}
+    )
+    db.session.add(step3)
+    db.session.commit()
+
     try:
         res = generate(messages, tools=[])
+        
+        # Verify client is still connected before committing or returning
+        if is_client_disconnected():
+            current_app.logger.info("Chat generation aborted: client disconnected.")
+            run.status = "stopped"
+            db.session.commit()
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+            
         content = res.get("content") or "I'm ready to assist you. Which ticket or policy question shall we tackle next?"
-        return jsonify({"reply": content})
+        
+        step3.result = {"content": content}
+        run.status = "completed"
+        db.session.commit()
+        
+        return jsonify({"reply": content, "run_id": run.id})
     except Exception as e:
+        if is_client_disconnected():
+            run.status = "stopped"
+            db.session.commit()
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+            
         # Log the exact failure for your own debugging and telemetry
         current_app.logger.error(f"Chat LLM generation failed: {str(e)}")
         
+        step3.result = {"error": str(e)}
+        run.status = "failed"
+        db.session.commit()
+
         # Provide a graceful, honest failure message to the user
         reply_text = (
             "I'm sorry, but I am currently experiencing a connection issue and cannot process your request. "
@@ -656,5 +738,5 @@ def pip_chat():
         )
         
         # Return a 200 so the frontend chat UI doesn't crash, but displays the error text smoothly
-        return jsonify({"reply": reply_text})
+        return jsonify({"reply": reply_text, "run_id": run.id})
 

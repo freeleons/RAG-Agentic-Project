@@ -5,6 +5,22 @@ interface ObservabilityAuditViewProps {
   onClose: () => void;
 }
 
+const getStatusBadge = (status: string) => {
+  const s = status?.toLowerCase();
+  switch (s) {
+    case "completed":
+      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/20";
+    case "running":
+      return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/20 animate-pulse";
+    case "stopped":
+      return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20";
+    case "failed":
+      return "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/20";
+    default:
+      return "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300";
+  }
+};
+
 export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ onClose }) => {
   const [runs, setRuns] = useState<any[]>([]);
   const [stats, setStats] = useState<any | null>(null);
@@ -172,11 +188,13 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="px-2.5 py-1 rounded-lg text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-semibold"
+                  className="px-2.5 py-1 rounded-lg text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-semibold cursor-pointer"
                 >
                   <option value="all">All Statuses</option>
                   <option value="completed">Completed</option>
-                  <option value="declined">Declined</option>
+                  <option value="running">Running</option>
+                  <option value="stopped">Stopped</option>
+                  <option value="failed">Failed</option>
                 </select>
               </div>
 
@@ -208,13 +226,8 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                     <p className="text-slate-800 dark:text-slate-200 truncate font-medium mb-1.5">{r.goal || "Ticket Triage Operation"}</p>
 
                     <div className="flex items-center justify-between text-[10px]">
-                      <span
-                        className={`px-2 py-0.5 rounded-full font-bold ${r.status === "completed"
-                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
-                          : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-                          }`}
-                      >
-                        {(r.status === "needs_confirmation" ? "declined" : r.status).toUpperCase()}
+                      <span className={`px-2 py-0.5 rounded-full font-bold uppercase border ${getStatusBadge(r.status)}`}>
+                        {r.status}
                       </span>
                       <span className="text-slate-500 dark:text-slate-400 font-mono">{r.created_at?.slice(0, 16)}</span>
                     </div>
@@ -232,8 +245,12 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                       <h3 className="font-bold text-base text-slate-900 dark:text-white">
                         Agent Run #{selectedRunDetails.run?.id} Trace Breakdown
                       </h3>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 font-mono font-medium">
-                        Status: {selectedRunDetails.run?.status} • Latency: {selectedRunDetails.run?.total_latency_ms}ms
+                      <p className="text-xs text-slate-600 dark:text-slate-400 font-mono font-medium flex items-center gap-2 mt-1">
+                        <span>Status:</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedRunDetails.run?.status)}`}>
+                          {selectedRunDetails.run?.status}
+                        </span>
+                        <span>• Latency: {selectedRunDetails.run?.total_latency_ms || 0}ms</span>
                       </p>
                     </div>
                   </div>

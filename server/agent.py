@@ -7,6 +7,7 @@ from server.llm import generate
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
 from server.tools import TOOLS, openai_tool_defs, validate_arguments
+from server.utils import is_client_disconnected
 
 SYSTEM_PROMPT = (
     "You are Pip, a friendly and professional AI Support Assistant for ApexCare Technologies.\n\n"
@@ -84,6 +85,16 @@ def run_agent(run, goal):
 def _loop(run, messages, retried):
     max_steps = current_app.config["MAX_AGENT_STEPS"]
     while True:
+        if is_client_disconnected():
+            current_app.logger.info(f"Run #{run.id} execution aborted by client disconnect.")
+            run.status = "stopped"
+            db.session.commit()
+            return {
+                "run_id": run.id,
+                "status": "stopped",
+                "answer": "Execution was stopped by the user."
+            }
+
         if _next_seq(run) > max_steps:
             return _finish(run, "failed", "I ran out of steps before finishing this task.")
 

@@ -7,6 +7,7 @@ interface TicketQueueProps {
   onSelectTicket: (ticket: Ticket) => void;
   onCreateNewTicket: () => void;
   isLoading: boolean;
+  triagingTickets?: Record<number, { isProcessing: boolean; currentStepIndex: number }>;
 }
 
 export const TicketQueue: React.FC<TicketQueueProps> = ({
@@ -15,6 +16,7 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
   onSelectTicket,
   onCreateNewTicket,
   isLoading,
+  triagingTickets,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
@@ -113,9 +115,16 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
                   <span className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-400">
                     {ticket.ticket_number}
                   </span>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getStatusBadgeClass(ticket.status)}`}>
-                    {ticket.status.replace("_", " ").toUpperCase()}
-                  </span>
+                  <div className="flex items-center space-x-1">
+                    {triagingTickets && triagingTickets[ticket.id]?.isProcessing && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-500 text-white animate-pulse flex items-center space-x-0.5">
+                        <span>🤖 Triaging...</span>
+                      </span>
+                    )}
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getStatusBadgeClass(ticket.status)}`}>
+                      {ticket.status.replace("_", " ").toUpperCase()}
+                    </span>
+                  </div>
                 </div>
 
                 <h3 className="font-bold text-xs text-slate-900 dark:text-white line-clamp-1 mb-1">

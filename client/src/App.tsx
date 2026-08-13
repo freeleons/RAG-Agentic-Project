@@ -26,9 +26,55 @@ export default function App() {
   const [activeView, setActiveView] = useState<"workbench" | "observability" | "knowledge">("workbench");
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [isLoadingTickets, setIsLoadingTickets] = useState<boolean>(false);
-  const [isTriaging, setIsTriaging] = useState<boolean>(false);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
+
+  // Per-ticket triage processing state map
+  interface TicketTriageState {
+    isProcessing: boolean;
+    runId?: number;
+    currentStepIndex: number;
+  }
+
+  const [triagingTickets, setTriagingTickets] = useState<Record<number, TicketTriageState>>({});
+  const triageAbortControllersRef = React.useRef<Record<number, AbortController>>({});
+
+  const agentSteps = [
+    "🧠 Analyzing query intent...",
+    "🔍 Searching audited policy knowledge base...",
+    "📚 Parsing retrieved documents...",
+    "✍️ Formulating policy-grounded draft response..."
+  ];
+
+  useEffect(() => {
+    const activeTicketIds = Object.keys(triagingTickets).map(Number).filter(
+      (id) => triagingTickets[id]?.isProcessing
+    );
+
+    if (activeTicketIds.length === 0) return;
+
+    const interval = setInterval(() => {
+      setTriagingTickets((prev) => {
+        const updated = { ...prev };
+        let changed = false;
+
+        activeTicketIds.forEach((id) => {
+          const current = updated[id];
+          if (current && current.currentStepIndex < agentSteps.length - 1) {
+            updated[id] = {
+              ...current,
+              currentStepIndex: current.currentStepIndex + 1,
+            };
+            changed = true;
+          }
+        });
+
+        return changed ? updated : prev;
+      });
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [triagingTickets]);
 
 
   // New ticket form state
@@ -104,13 +150,15 @@ export default function App() {
     }
   };
 
-  const triageAbortControllerRef = React.useRef<AbortController | null>(null);
-
   const handleRunTriage = async (ticket: Ticket) => {
-    setIsTriaging(true);
     setLatestRun(null);
+    setTriagingTickets((prev) => ({
+      ...prev,
+      [ticket.id]: { isProcessing: true, currentStepIndex: 0 },
+    }));
+
     const controller = new AbortController();
-    triageAbortControllerRef.current = controller;
+    triageAbortControllersRef.current[ticket.id] = controller;
 
     try {
       const res = await triageTicket(ticket.id, { signal: controller.signal });
@@ -132,8 +180,11 @@ export default function App() {
         "";
 
       const updatedTicket = { ...res.ticket, draft_reply: draftText };
-      setSelectedTicket(updatedTicket);
-      setLatestRun(runObj);
+      
+      if (selectedTicket?.id === ticket.id) {
+        setSelectedTicket(updatedTicket);
+        setLatestRun(runObj);
+      }
       setTickets((prev) => prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)));
     } catch (err: any) {
       if (err.name === "AbortError") {
@@ -141,13 +192,23 @@ export default function App() {
       }
       alert(err.message || "Triage failed");
     } finally {
-      setIsTriaging(false);
+      setTriagingTickets((prev) => {
+        const copy = { ...prev };
+        delete copy[ticket.id];
+        return copy;
+      });
+      delete triageAbortControllersRef.current[ticket.id];
     }
   };
 
-  const handleStopTriage = () => {
-    triageAbortControllerRef.current?.abort();
-    setIsTriaging(false);
+  const handleStopTriage = (ticketId: number) => {
+    triageAbortControllersRef.current[ticketId]?.abort();
+    setTriagingTickets((prev) => {
+      const copy = { ...prev };
+      delete copy[ticketId];
+      return copy;
+    });
+    delete triageAbortControllersRef.current[ticketId];
   };
 
   const handleUpdateTicketStatus = async (ticketId: number, status: Ticket["status"]) => {
@@ -243,6 +304,7 @@ export default function App() {
               onSelectTicket={(t) => setSelectedTicket(t)}
               onCreateNewTicket={() => setShowNewTicketModal(true)}
               isLoading={isLoadingTickets}
+              triagingTickets={triagingTickets}
             />
           </div>
 
@@ -253,7 +315,7 @@ export default function App() {
             onStopTriage={handleStopTriage}
             onUpdateTicketStatus={handleUpdateTicketStatus}
             onSendReply={handleSendReply}
-            isTriaging={isTriaging}
+            triagingTickets={triagingTickets}
           />
 
           {/* Right AI Copilot Assistant & Trace Drawer (~25%) */}
@@ -262,7 +324,7 @@ export default function App() {
             activeTicket={selectedTicket}
             tickets={tickets}
             latestRun={latestRun}
-            isProcessing={isTriaging}
+            isProcessing={selectedTicket ? Boolean(triagingTickets[selectedTicket.id]?.isProcessing) : false}
           />
         </div>
       </div>

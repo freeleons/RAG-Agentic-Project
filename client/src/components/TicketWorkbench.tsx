@@ -4,10 +4,10 @@ import { Ticket } from "../types";
 interface TicketWorkbenchProps {
   ticket: Ticket | null;
   onRunTriage: (ticket: Ticket) => void;
-  onStopTriage: () => void;
+  onStopTriage: (ticketId: number) => void;
   onUpdateTicketStatus: (ticketId: number, status: Ticket["status"]) => void;
   onSendReply: (ticketId: number, replyText: string) => void;
-  isTriaging: boolean;
+  triagingTickets: Record<number, { isProcessing: boolean; currentStepIndex: number }>;
 }
 
 export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
@@ -16,14 +16,24 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   onStopTriage,
   onUpdateTicketStatus,
   onSendReply,
-  isTriaging,
+  triagingTickets,
 }) => {
   const [replyInput, setReplyInput] = useState("");
   // Persistent reply state memory map indexed by ticket ID
   const [ticketDrafts, setTicketDrafts] = useState<Record<number, string>>({});
   const lastSeenDrafts = useRef<Record<number, string | null | undefined>>({});
-  const [triageStage, setTriageStage] = useState<"searching" | "formulating">("searching");
   const ticketChatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const currentTriage = ticket ? triagingTickets[ticket.id] : null;
+  const isTicketTriaging = Boolean(currentTriage?.isProcessing);
+  const stepIndex = currentTriage?.currentStepIndex || 0;
+
+  const agentSteps = [
+    "🧠 Analyzing query intent...",
+    "🔍 Searching audited policy knowledge base...",
+    "📚 Parsing retrieved documents...",
+    "✍️ Formulating policy-grounded draft response..."
+  ];
 
   const scrollToBottom = () => {
     ticketChatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -34,20 +44,7 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
     scrollToBottom();
     const timer = setTimeout(scrollToBottom, 50);
     return () => clearTimeout(timer);
-  }, [ticket?.id, ticket?.status, ticket?.draft_reply, ticket?.replies, ticket?.replies?.length, isTriaging]);
-
-  // Multi-stage execution progress indicator (Searching Knowledge Base -> Formulating Response)
-  useEffect(() => {
-    if (!isTriaging) {
-      setTriageStage("searching");
-      return;
-    }
-    setTriageStage("searching");
-    const timer = setTimeout(() => {
-      setTriageStage("formulating");
-    }, 1800);
-    return () => clearTimeout(timer);
-  }, [isTriaging]);
+  }, [ticket?.id, ticket?.status, ticket?.draft_reply, ticket?.replies, ticket?.replies?.length, isTicketTriaging]);
 
   // Sync or restore ticket-specific draft text when switching active tickets or when Pip drafts a response
   useEffect(() => {
@@ -94,7 +91,7 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
 
   const handleManualSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!replyInput.trim() || isTriaging) return;
+    if (!replyInput.trim() || isTicketTriaging) return;
     onSendReply(ticket.id, replyInput);
     setReplyInput("");
     setTicketDrafts((prev) => {
@@ -230,13 +227,15 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
             <div className="relative">
               <textarea
                 rows={6}
-                disabled={isTriaging}
-                placeholder={isTriaging ? "" : `Write a reply to ${ticket.requester_name.split(" ")[0]} or click "Draft with Pip"...`}
+                disabled={isTicketTriaging}
+                placeholder={
+                  isTicketTriaging
+                    ? ""
+                    : `Write a reply to ${ticket.requester_name.split(" ")[0]} or click "Draft with Pip"...`
+                }
                 value={
-                  isTriaging
-                    ? triageStage === "searching"
-                      ? "🔍 Pip is searching the audited policy knowledge base..."
-                      : "✍️ Pip is formulating policy-grounded draft response..."
+                  isTicketTriaging
+                    ? agentSteps[stepIndex]
                     : replyInput
                 }
                 onChange={(e) => handleInputChange(e.target.value)}
@@ -247,7 +246,7 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
                   }
                 }}
                 className={`w-full p-4 rounded-2xl text-xs sm:text-sm leading-relaxed transition-all min-h-[140px] max-h-[280px] overflow-y-auto custom-scrollbar font-medium ${
-                  isTriaging
+                  isTicketTriaging
                     ? "bg-blue-500/10 dark:bg-blue-500/20 border-2 border-blue-500/60 text-blue-700 dark:text-blue-300 font-mono font-bold animate-pulse"
                     : "bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 }`}
@@ -261,10 +260,10 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
 
               <div className="flex items-center space-x-3 ml-auto shrink-0">
                 {/* Shiny & Colorful "Draft with Pip" or "Stop Drafting" Button */}
-                {isTriaging ? (
+                {isTicketTriaging ? (
                   <button
                     type="button"
-                    onClick={onStopTriage}
+                    onClick={() => ticket && onStopTriage(ticket.id)}
                     className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition shadow-md cursor-pointer whitespace-nowrap shadow-rose-500/20"
                   >
                     <span>⏹️</span>
@@ -289,7 +288,7 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
                 {/* Primary Button: "Send Reply" (HR Specialist Sends) */}
                 <button
                   type="submit"
-                  disabled={!replyInput.trim() || isTriaging}
+                  disabled={!replyInput.trim() || isTicketTriaging}
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition cursor-pointer shadow-md shadow-emerald-500/20 whitespace-nowrap"
                 >
                   Send Reply

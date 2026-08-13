@@ -13,10 +13,33 @@ interface AICopilotWidgetProps {
 
 interface ChatMessage {
   id: string;
-  sender: "user" | "pip";
+  sender: "user" | "pip" | "system";
   text: string;
   timestamp: string;
 }
+
+const mapRunStepToStatus = (latestStep?: { kind: string; tool_name?: string }): string => {
+  if (!latestStep) return "🧠 Analyzing request...";
+  
+  if (latestStep.kind === "tool_call") {
+    switch (latestStep.tool_name) {
+      case "search_knowledge":
+        return "🔍 Searching audited policy knowledge base...";
+      case "create_draft":
+        return "📝 Generating draft reply for ticket...";
+      case "escalate":
+        return "⚠️ Processing ticket escalation...";
+      default:
+        return `🛠️ Executing tool: ${latestStep.tool_name}...`;
+    }
+  }
+  
+  if (latestStep.kind === "llm_call") {
+    return "✍️ Formulating policy-grounded response...";
+  }
+
+  return "⚡ Processing agent workflow...";
+};
 
 export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   user,
@@ -34,7 +57,8 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   const [inputMessage, setInputMessage] = useState("");
   const [isBotThinking, setIsBotThinking] = useState(false);
   const [isBotTalking, setIsBotTalking] = useState(false);
-  const [thinkingStage, setThinkingStage] = useState<"searching" | "formulating">("searching");
+  const [activeRunId, setActiveRunId] = useState<number | null>(null);
+  const [currentStatusText, setCurrentStatusText] = useState<string>("🧠 Analyzing request...");
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -52,18 +76,31 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     scrollToBottom();
   }, [chatMessages, isBotThinking, isBotTalking]);
 
-  // Dynamic multi-stage execution progress
   useEffect(() => {
-    if (!isBotThinking && !isProcessing) {
-      setThinkingStage("searching");
+    if (!isBotThinking || !activeRunId) {
+      setCurrentStatusText("🧠 Analyzing request...");
       return;
     }
-    setThinkingStage("searching");
-    const timer = setTimeout(() => {
-      setThinkingStage("formulating");
-    }, 1800);
-    return () => clearTimeout(timer);
-  }, [isBotThinking, isProcessing]);
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const token = localStorage.getItem("apexcare_token");
+        const res = await fetch(`/api/runs/${activeRunId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const steps = data.steps || [];
+          const latestStep = steps[steps.length - 1];
+          setCurrentStatusText(mapRunStepToStatus(latestStep));
+        }
+      } catch (err) {
+        // Ignore transient polling errors
+      }
+    }, 600);
+
+    return () => clearInterval(pollInterval);
+  }, [isBotThinking, activeRunId]);
 
   const getPipStatus = (): PipStatusState => {
     if (isProcessing || isBotThinking) return "thinking";
@@ -109,6 +146,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       if (res.ok) {
         const data = await res.json();
         answerText = data.reply;
+        setActiveRunId(data.run_id);
       } else {
         throw new Error("API call failed");
       }
@@ -122,13 +160,24 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
       setChatMessages((prev) => [...prev, botMsg]);
       setIsBotThinking(false);
+      setActiveRunId(null);
       setIsBotTalking(true);
 
       setTimeout(() => {
         setIsBotTalking(false);
       }, 3500);
     } catch (err: any) {
+      setIsBotThinking(false);
+      setActiveRunId(null);
       if (err.name === "AbortError") {
+        const stoppedMsg: ChatMessage = {
+          id: Date.now().toString(),
+          sender: "system",
+          text: "You stopped this response",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        setChatMessages((prev) => [...prev, stoppedMsg]);
+        setIsBotThinking(false);
         return;
       }
       const lower = textToSend.toLowerCase().trim();
@@ -221,39 +270,48 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         <div className="flex-1 flex flex-col justify-between space-y-3">
           {/* Chat Messages Timeline */}
           <div className="space-y-3 overflow-y-auto max-h-[380px] custom-scrollbar pr-1">
-            {chatMessages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex space-x-2 ${msg.sender === "user" ? "justify-end" : "justify-start"
-                  }`}
-              >
-                {msg.sender === "pip" && (
-                  <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/30 border border-white/20 mt-0.5">
-                    P
+            {chatMessages.map((msg) => {
+              if (msg.sender === "system") {
+                return (
+                  <div key={msg.id} className="relative flex py-2 items-center my-2">
+                    <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                    <span className="flex-shrink mx-3 text-[11px] text-slate-400 dark:text-slate-500 font-medium">
+                      {msg.text}
+                    </span>
+                    <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
                   </div>
-                )}
+                );
+              }
+
+              return (
                 <div
-                  className={`p-3 rounded-2xl max-w-[85%] text-xs leading-relaxed ${msg.sender === "user"
-                      ? "bg-blue-600 text-white rounded-br-none shadow-xs"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none shadow-xs"
+                  key={msg.id}
+                  className={`flex space-x-2 ${msg.sender === "user" ? "justify-end" : "justify-start"
                     }`}
                 >
-                  <p>{msg.text}</p>
-                  <span className="text-[9px] opacity-70 block text-right mt-1 font-mono">
-                    {msg.timestamp}
-                  </span>
+                  {msg.sender === "pip" && (
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/30 border border-white/20 mt-0.5">
+                      P
+                    </div>
+                  )}
+                  <div
+                    className={`p-3 rounded-2xl max-w-[85%] text-xs leading-relaxed ${msg.sender === "user"
+                        ? "bg-blue-600 text-white rounded-br-none shadow-xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none shadow-xs"
+                      }`}
+                  >
+                    <p>{msg.text}</p>
+                    <span className="text-[9px] opacity-70 block text-right mt-1 font-mono">
+                      {msg.timestamp}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {isBotThinking && (
               <div className="flex space-x-2 items-center text-xs text-blue-600 dark:text-blue-400 font-semibold p-2 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-800 animate-pulse font-mono">
-                <span>🤖</span>
-                <span>
-                  {thinkingStage === "searching"
-                    ? "🔍 Searching audited policy knowledge base..."
-                    : "✍️ Formulating policy-grounded response..."}
-                </span>
+                <span>{currentStatusText}</span>
               </div>
             )}
             <div ref={chatEndRef} />
