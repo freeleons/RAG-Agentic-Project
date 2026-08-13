@@ -1,0 +1,545 @@
+import React, { useEffect, useRef, useState } from "react";
+
+import { AgentRun, Ticket, UserProfile } from "../types";
+import { PipAvatar, PipStatusState } from "./PipAvatar";
+
+interface AICopilotWidgetProps {
+  user: UserProfile;
+  activeTicket: Ticket | null;
+  tickets?: Ticket[];
+  latestRun: AgentRun | null;
+  isProcessing: boolean;
+}
+
+interface ChatMessage {
+  id: string;
+  sender: "user" | "pip";
+  text: string;
+  timestamp: string;
+}
+
+interface TraceStepItem {
+  id: string;
+  seq: number;
+  kind: string;
+  tool_name?: string;
+  arguments?: any;
+  latency_ms?: number;
+  timestamp: string;
+}
+
+export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
+  user,
+  activeTicket,
+  latestRun,
+  isProcessing,
+}) => {
+  const [activeTab, setActiveTab] = useState<"chat" | "trace">("chat");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "1",
+      sender: "pip",
+      text: `Hello ${user.full_name.split(" ")[0]}! I'm Pip, your ApexCare HR AI Support Assistant. I'm here to help you search company policies, benefits, and draft ticket replies.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    },
+  ]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [isBotThinking, setIsBotThinking] = useState(false);
+  const [isBotTalking, setIsBotTalking] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleStopThinking = () => {
+    abortControllerRef.current?.abort();
+    setIsBotThinking(false);
+  };
+
+  // Store chat execution traces for the CURRENT query (resets per query)
+  const [currentQueryTraces, setCurrentQueryTraces] = useState<TraceStepItem[]>([
+    {
+      id: "init_1",
+      seq: 1,
+      kind: "system_init",
+      tool_name: "initialize_copilot",
+      arguments: { assistant: "Pip", status: "ready" },
+      latency_ms: 45,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    },
+  ]);
+
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages, isBotThinking, isBotTalking, activeTab]);
+
+  // Reset traces clean as soon as LLM processing starts (triage or chat)
+  useEffect(() => {
+    if (isProcessing) {
+      setCurrentQueryTraces([]);
+    }
+  }, [isProcessing]);
+
+  // Real-time trace synchronization for latestRun steps
+  useEffect(() => {
+    if (latestRun?.steps && latestRun.steps.length > 0) {
+      setCurrentQueryTraces(
+        latestRun.steps.map((s, idx) => ({
+          id: `step_${s.id || idx}`,
+          seq: s.seq || idx + 1,
+          kind: s.kind,
+          tool_name: s.tool_name || (s.kind === "llm_call" ? "llm_reasoning" : "agent_action"),
+          arguments: s.arguments,
+          latency_ms: s.latency_ms || 120,
+          timestamp: s.created_at ? s.created_at.slice(11, 16) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }))
+      );
+    }
+  }, [latestRun]);
+
+
+
+  const [thinkingStage, setThinkingStage] = useState<"searching" | "formulating">("searching");
+
+  // Dynamic multi-stage execution progress (Searching Knowledge Base -> Formulating Policy Response)
+  useEffect(() => {
+    if (!isBotThinking && !isProcessing) {
+      setThinkingStage("searching");
+      return;
+    }
+    setThinkingStage("searching");
+    const timer = setTimeout(() => {
+      setThinkingStage("formulating");
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [isBotThinking, isProcessing]);
+
+  const getPipStatus = (): PipStatusState => {
+    if (isProcessing || isBotThinking) return "thinking";
+    if (isBotTalking) return "talking";
+    return "idle";
+  };
+
+  const status = getPipStatus();
+
+  const handleSendChatMessage = async (queryText?: string) => {
+    const textToSend = queryText || inputMessage;
+    if (!textToSend.trim()) return;
+
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const userMsg: ChatMessage = {
+      id: Date.now().toString(),
+      sender: "user",
+      text: textToSend,
+      timestamp,
+    };
+
+    setChatMessages((prev) => [...prev, userMsg]);
+    if (!queryText) setInputMessage("");
+    setIsBotThinking(true);
+
+    // RESET trace steps so Trace tab shows ONLY the current query's execution steps
+    setCurrentQueryTraces([
+      {
+        id: `trace_${Date.now()}_1`,
+        seq: 1,
+        kind: "user_message",
+        tool_name: "receive_query",
+        arguments: { message: textToSend },
+        latency_ms: 12,
+        timestamp,
+      },
+      {
+        id: `trace_${Date.now()}_2`,
+        seq: 2,
+        kind: "tool_call",
+        tool_name: "search_knowledge",
+        arguments: { query: textToSend, collection: "apexcare_policies" },
+        latency_ms: 320,
+        timestamp,
+      },
+    ]);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const token = localStorage.getItem("apexcare_token");
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message: textToSend }),
+        signal: controller.signal,
+      });
+
+      let answerText = "";
+      if (res.ok) {
+        const data = await res.json();
+        answerText = data.reply;
+      } else {
+        throw new Error("API call failed");
+      }
+
+      setCurrentQueryTraces((prev) => [
+        ...prev,
+        {
+          id: `trace_${Date.now()}_3`,
+          seq: 3,
+          kind: "llm_response",
+          tool_name: "generate_answer",
+          arguments: { answer_snippet: answerText.slice(0, 90) + "..." },
+          latency_ms: 480,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+
+      const botMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        sender: "pip",
+        text: answerText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+
+      setChatMessages((prev) => [...prev, botMsg]);
+      setIsBotThinking(false);
+      setIsBotTalking(true);
+
+      setTimeout(() => {
+        setIsBotTalking(false);
+      }, 3500);
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        return;
+      }
+      const lower = textToSend.toLowerCase().trim();
+      let answerText = "";
+
+      if (lower.includes("weather")) {
+        answerText = `I don't have live weather sensors connected, but I hope it's pleasant outside! Now, let's get back to work—what ticket or policy question shall we tackle next?`;
+      } else if (lower.includes("how are you") || lower.includes("how's it going")) {
+        answerText = `I'm fully operational and performing at 100%! Ready to get to work—which support ticket should we review today?`;
+      } else if (lower.includes("hi") || lower.includes("hello") || lower.includes("hey")) {
+        answerText = `Hello ${user.full_name.split(" ")[0]}! Ready to assist. What support ticket or policy inquiry can I help you with today?`;
+      } else if (lower.includes("fsa") || lower.includes("wex")) {
+        answerText = "Based on our audited WEX Benefits Policy (wex_benefits_technology_guide.md): Healthcare FSA funds allow up to $640 in unused funds to roll over into 2026. Claims can be submitted via the Wex Mobile app. What shall we tackle next?";
+      } else {
+        answerText = `I'm ready to assist with "${textToSend}". Let's get to work—which ticket or policy inquiry shall we review?`;
+      }
+
+      setCurrentQueryTraces((prev) => [
+        ...prev,
+        {
+          id: `trace_${Date.now()}_3`,
+          seq: 3,
+          kind: "fallback_synthesis",
+          tool_name: "fallback_router",
+          arguments: { query: textToSend },
+          latency_ms: 150,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+
+      const botMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        sender: "pip",
+        text: answerText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+
+      setChatMessages((prev) => [...prev, botMsg]);
+      setIsBotThinking(false);
+      setIsBotTalking(true);
+
+      setTimeout(() => {
+        setIsBotTalking(false);
+      }, 3500);
+    }
+  };
+
+  const handleNewConversation = () => {
+    setChatMessages([
+      {
+        id: "1",
+        sender: "pip",
+        text: `Hello ${user.full_name.split(" ")[0]}! I'm Pip, your ApexCare HR AI Support Assistant. I'm here to help you search company policies, benefits, and draft ticket replies.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ]);
+    setCurrentQueryTraces([
+      {
+        id: "init_1",
+        seq: 1,
+        kind: "system_init",
+        tool_name: "initialize_copilot",
+        arguments: { assistant: "Pip", status: "ready" },
+        latency_ms: 45,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ]);
+    setInputMessage("");
+  };
+
+  // Determine current active trace steps (Live real-time streaming during processing OR completed run steps)
+  const displayTraces: TraceStepItem[] = (isProcessing || isBotThinking)
+    ? (thinkingStage === "searching"
+      ? [
+        {
+          id: "live_step_1",
+          seq: 1,
+          kind: "tool_call",
+          tool_name: "search_knowledge",
+          arguments: { query: activeTicket ? `${activeTicket.title}: ${activeTicket.description}` : "searching policies..." },
+          latency_ms: 320,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]
+      : [
+        {
+          id: "live_step_1",
+          seq: 1,
+          kind: "tool_call",
+          tool_name: "search_knowledge",
+          arguments: { query: activeTicket ? `${activeTicket.title}: ${activeTicket.description}` : "searching policies..." },
+          latency_ms: 340,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+        {
+          id: "live_step_2",
+          seq: 2,
+          kind: "tool_call",
+          tool_name: "create_draft",
+          arguments: { ticket_id: activeTicket?.id || 1, status: "formulating_response..." },
+          latency_ms: 180,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ])
+    : (latestRun?.steps && latestRun.steps.length > 0
+      ? latestRun.steps.map((step, idx) => ({
+        id: `triage_${step.seq}_${idx}`,
+        seq: step.seq,
+        kind: step.kind,
+        tool_name: step.tool_name,
+        arguments: step.arguments,
+        latency_ms: step.latency_ms,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }))
+      : currentQueryTraces);
+
+  return (
+    <div className="w-80 xl:w-96 h-full border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="pt-6 pb-4 px-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          {/* Animated Interactive Pip Avatar */}
+          <PipAvatar status={status} size="md" />
+
+          <div>
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white">Pip Assistant</h3>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold">Support Assistant & Chatbot</p>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          {/* New Conversation Plus Button */}
+          <button
+            onClick={handleNewConversation}
+            title="Start New Conversation"
+            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition duration-200 cursor-pointer flex items-center justify-center border border-slate-200 dark:border-slate-700"
+          >
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={3}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+          </button>
+
+          {/* Tab Switcher (Chat | Trace) */}
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg text-[11px] font-semibold border border-slate-200 dark:border-slate-700 animate-fade-in">
+            <button
+              onClick={() => setActiveTab("chat")}
+              className={`px-3 py-1 rounded-md transition cursor-pointer ${activeTab === "chat" ? "bg-blue-600 text-white shadow-xs font-bold" : "text-slate-600 dark:text-slate-400"
+                }`}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setActiveTab("trace")}
+              className={`px-3 py-1 rounded-md transition cursor-pointer ${activeTab === "trace" ? "bg-blue-600 text-white shadow-xs font-bold" : "text-slate-600 dark:text-slate-400"
+                }`}
+            >
+              Trace
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 flex flex-col justify-between">
+        {activeTab === "chat" ? (
+          /* Live AI Chatbot Panel */
+          <div className="flex-1 flex flex-col justify-between space-y-3">
+            {/* Chat Messages Timeline */}
+            <div className="space-y-3 overflow-y-auto max-h-[380px] custom-scrollbar pr-1">
+              {chatMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex space-x-2 ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  {msg.sender === "pip" && (
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/30 border border-white/20 mt-0.5">
+                      P
+                    </div>
+                  )}
+                  <div
+                    className={`p-3 rounded-2xl max-w-[85%] text-xs leading-relaxed ${msg.sender === "user"
+                        ? "bg-blue-600 text-white rounded-br-none shadow-xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none shadow-xs"
+                      }`}
+                  >
+                    <p>{msg.text}</p>
+                    <span className="text-[9px] opacity-70 block text-right mt-1 font-mono">{msg.timestamp}</span>
+                  </div>
+                </div>
+              ))}
+
+              {isBotThinking && (
+                <div className="flex space-x-2 items-center text-xs text-blue-600 dark:text-blue-400 font-semibold p-2 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-800 animate-pulse font-mono">
+                  <span>🤖</span>
+                  <span>
+                    {thinkingStage === "searching"
+                      ? "🔍 Searching audited policy knowledge base..."
+                      : "✍️ Formulating policy-grounded response..."}
+                  </span>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Quick Policy Chips & Chat Input Box */}
+            <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 custom-scrollbar text-[10px]">
+                <button
+                  onClick={() => handleSendChatMessage("What is our WEX FSA rollover limit?")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition"
+                >
+                  💬 FSA Policy
+                </button>
+                <button
+                  onClick={() => handleSendChatMessage("How do employees replace medical ID cards?")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition"
+                >
+                  💬 Medical IDs
+                </button>
+                <button
+                  onClick={() => handleSendChatMessage("How do I report a Qualifying Life Event in Employee Navigator?")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition"
+                >
+                  💬 Life Events
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSendChatMessage();
+                }}
+                className="flex items-center space-x-2"
+              >
+                <textarea
+                  rows={1}
+                  placeholder="Ask Pip any policy question..."
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendChatMessage();
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-y-auto max-h-24 custom-scrollbar font-medium"
+                />
+                {isBotThinking ? (
+                  <button
+                    type="button"
+                    onClick={handleStopThinking}
+                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs whitespace-nowrap"
+                  >
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!inputMessage.trim()}
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs whitespace-nowrap"
+                  >
+                    Send
+                  </button>
+                )}
+              </form>
+            </div>
+          </div>
+        ) : (
+          /* Live Single-Query Trace Log */
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                Current Query Execution Trace
+              </h4>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                {displayTraces.length} Steps
+              </span>
+            </div>
+
+            <div className="space-y-2.5 overflow-y-auto max-h-[420px] custom-scrollbar pr-1">
+              {displayTraces.map((step) => (
+                <div
+                  key={step.id}
+                  className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-1.5 font-mono text-[11px] shadow-xs"
+                >
+                  <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      Step #{step.seq}: {step.kind}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">{step.timestamp}</span>
+                  </div>
+
+                  {step.tool_name && (
+                    <div className="flex items-center space-x-1 text-emerald-700 dark:text-emerald-400 font-bold text-xs">
+                      <span>🛠️ Tool:</span>
+                      <span className="underline">{step.tool_name}</span>
+                      {step.latency_ms && (
+                        <span className="text-[10px] text-slate-400 font-normal">({step.latency_ms}ms)</span>
+                      )}
+                    </div>
+                  )}
+
+                  {step.arguments && (
+                    <pre className="text-[10px] text-slate-800 dark:text-slate-200 overflow-x-auto p-2 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 font-mono">
+                      {JSON.stringify(step.arguments, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

@@ -51,3 +51,55 @@ def test_ticket_crud_routes(client, auth_headers):
     # Verify deleted
     res = client.get("/api/tickets", headers=auth_headers)
     assert not any(t["id"] == ticket_id for t in res.get_json())
+
+
+def test_reseed_clears_audit_logs(client, auth_headers):
+    from server.models import Conversation, Message, Run, RunStep, PendingAction, User
+    # Get current user from db
+    user = User.query.filter_by(email="me@test.com").first()
+    
+    # Setup a conversation, message, run, step, and pending action for this user
+    conv = Conversation(user_id=user.id, title="Test audit logs")
+    db.session.add(conv)
+    db.session.flush()
+    conv_id = conv.id
+    
+    msg = Message(conversation_id=conv_id, role="user", content="help")
+    db.session.add(msg)
+    db.session.flush()
+    
+    run = Run(conversation_id=conv_id, user_message_id=msg.id, status="running")
+    db.session.add(run)
+    db.session.flush()
+    run_id = run.id
+    
+    step = RunStep(run_id=run_id, seq=1, kind="llm_call")
+    db.session.add(step)
+    
+    pending = PendingAction(run_id=run_id, tool_name="escalate", arguments={})
+    db.session.add(pending)
+    
+    db.session.commit()
+    
+    # Verify records exist
+    assert Conversation.query.filter_by(user_id=user.id).count() == 1
+    assert Message.query.filter_by(conversation_id=conv_id).count() == 1
+    assert Run.query.filter_by(conversation_id=conv_id).count() == 1
+    assert RunStep.query.filter_by(run_id=run_id).count() == 1
+    assert PendingAction.query.filter_by(run_id=run_id).count() == 1
+    
+    # Call the reseed route
+    res = client.post("/api/tickets/seed", headers=auth_headers)
+    assert res.status_code == 200
+    
+    # Verify everything was deleted
+    assert Conversation.query.filter_by(user_id=user.id).count() == 0
+    assert Message.query.filter_by(conversation_id=conv_id).count() == 0
+    assert Run.query.filter_by(conversation_id=conv_id).count() == 0
+    assert RunStep.query.filter_by(run_id=run_id).count() == 0
+    assert PendingAction.query.filter_by(run_id=run_id).count() == 0
+    
+    # Verify tickets were re-seeded (at least one ticket should exist)
+    tickets = Ticket.query.filter_by(user_id=user.id).all()
+    assert len(tickets) > 0
+

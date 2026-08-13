@@ -1,3 +1,12 @@
+export interface UserProfile {
+  id: number;
+  email: string;
+  full_name: string;
+  department: string;
+  role_title: string;
+  is_admin?: boolean;
+}
+
 export interface Conversation {
   id: number;
   title: string;
@@ -6,11 +15,22 @@ export interface Conversation {
 
 export interface Ticket {
   id: number;
+  ticket_number: string;
+  user_id: number;
+  requester_name: string;
+  requester_email: string;
+  requester_department: string;
   title: string;
   description: string;
-  status: "open" | "in_progress" | "resolved" | "closed" | string;
+  status: "open" | "in_triage" | "draft_pending" | "escalated" | "resolved" | string;
   priority: "low" | "medium" | "high" | "urgent" | string;
-  category: "IT" | "HR" | "Billing" | "Facilities" | "General" | string;
+  category: "HR & Benefits" | "IT Support" | "Billing & Expenses" | "General" | string;
+  channel?: "Workday Portal" | "Slack HR Connect" | "Email" | "Helpdesk" | string;
+  sla_minutes_remaining?: number;
+  draft_reply?: string | null;
+  draft_confidence?: number;
+  escalation_reason?: string | null;
+  replies?: { id: string; sender: string; text: string; timestamp: string }[];
   created_at: string;
   updated_at?: string;
 }
@@ -21,7 +41,6 @@ export interface TicketFilters {
   category?: string;
   q?: string;
 }
-
 
 export interface ChatMessage {
   id: number;
@@ -40,10 +59,24 @@ export interface TraceStep {
   llm_messages?: unknown[] | null;
 }
 
+export interface RunStep {
+  seq: number;
+  kind: "llm_call" | "tool_call";
+  id?: string | number;
+  created_at?: string;
+  tool_name?: string;
+  arguments?: Record<string, any>;
+  result?: any;
+  latency_ms?: number;
+  llm_messages?: any[];
+  prompt_tokens?: number;
+  completion_tokens?: number;
+}
+
 export interface PendingAction {
   id: number;
   tool: string;
-  arguments: Record<string, unknown>;
+  arguments: Record<string, any>;
 }
 
 export interface RunOutcome {
@@ -54,7 +87,6 @@ export interface RunOutcome {
   trace: TraceStep[];
   conversation_title?: string;
 }
-
 
 export interface RunDetail {
   id: number;
@@ -73,7 +105,6 @@ export interface RunSummary {
   step_count?: number;
   total_latency_ms?: number | null;
 }
-
 
 export interface ConversationHistory {
   messages: ChatMessage[];
@@ -152,4 +183,21 @@ export interface RunStats {
   tool_usage: Record<string, number>;
   runs_per_day: DayCounts[];
   latency_buckets: LatencyBucket[];
+}
+
+export interface AgentRun {
+  run_id: number;
+  status: "running" | "completed" | "needs_confirmation" | "failed" | "declined";
+  answer?: string;
+  pending_action?: PendingAction;
+  steps?: RunStep[];
+  total_latency_ms?: number;
+}
+
+export interface KnowledgeDocument {
+  filename: string;
+  title: string;
+  category: string;
+  size_bytes: number;
+  content: string;
 }

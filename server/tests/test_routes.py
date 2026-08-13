@@ -177,3 +177,73 @@ def test_get_conversation_messages_isolated(client, auth_headers, other_headers)
     conv_id = client.post("/api/conversations", json={}, headers=auth_headers).get_json()["id"]
     resp = client.get(f"/api/conversations/{conv_id}/messages", headers=other_headers)
     assert resp.status_code == 404
+
+
+def test_pip_chat_routes(client, auth_headers, monkeypatch):
+    # Test auth requirement
+    resp = client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 401
+
+    # Test empty message validation
+    resp = client.post("/api/chat", json={"message": "   "}, headers=auth_headers)
+    assert resp.status_code == 400
+    assert resp.get_json()["error"] == "message is required"
+
+    # Test successful chat response with policy match (needs knowledge search)
+    mock_called = []
+    def mock_generate(messages, tools):
+        mock_called.append((messages, tools))
+        # If classification prompt, return YES
+        if len(messages) == 1 and "routing assistant" in messages[0]["content"]:
+            return {"type": "final", "content": "YES"}
+        return {"type": "final", "content": "I'm Pip! Let's get back to work!"}
+    
+    search_called = []
+    def mock_search_knowledge_match(query):
+        search_called.append(query)
+        return {"answer": "Official PTO policy details...", "sources": ["PTO.pdf"]}
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr("server.tools.search_knowledge.search_knowledge", mock_search_knowledge_match)
+
+    resp = client.post("/api/chat", json={"message": "PTO policy"}, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.get_json()["reply"] == "I'm Pip! Let's get back to work!"
+    
+    # Assert generate called twice: 1 for classification, 1 for final response
+    assert len(mock_called) == 2
+    # Assert search_knowledge was called
+    assert len(search_called) == 1
+    assert search_called[0] == "PTO policy"
+    
+    # Assert second generate got system prompt with knowledge
+    system_msg = mock_called[1][0][0]
+    assert "You are Pip" in system_msg["content"]
+    assert "AUDITED_POLICY_KNOWLEDGE_RESULT" in system_msg["content"]
+    assert "NO_POLICY_MATCH" not in system_msg["content"]
+
+    # Test chat response with off-topic question classified as NO (should skip search_knowledge!)
+    mock_called.clear()
+    search_called.clear()
+    
+    def mock_generate_no_kb(messages, tools):
+        mock_called.append((messages, tools))
+        if len(messages) == 1 and "routing assistant" in messages[0]["content"]:
+            return {"type": "final", "content": "NO"}
+        return {"type": "final", "content": "Fun response!"}
+        
+    monkeypatch.setattr("server.routes.generate", mock_generate_no_kb)
+
+    resp = client.post("/api/chat", json={"message": "how is the weather"}, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.get_json()["reply"] == "Fun response!"
+    
+    assert len(mock_called) == 2
+    # Assert search_knowledge was SKIPPED (not called!)
+    assert len(search_called) == 0
+    # Assert second generate got system prompt with no_policy_match instructions
+    system_msg = mock_called[1][0][0]
+    assert "You are Pip" in system_msg["content"]
+    assert "The knowledge base search returned NO_POLICY_MATCH" in system_msg["content"]
+    assert "highly witty, playful, and fun way first" in system_msg["content"]
+

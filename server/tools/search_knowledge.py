@@ -9,10 +9,19 @@ def search_knowledge(query):
         f"{cfg['ANYTHINGLLM_BASE_URL'].rstrip('/')}"
         f"/api/v1/workspace/{cfg['ANYTHINGLLM_WORKSPACE']}/chat"
     )
+    
+    # Direct AnythingLLM to halt generation immediately if info is missing from document context
+    instructed_message = (
+        f"{query}\n\n"
+        "[Instruction: Search document context strictly. Parse and evaluate all retrieved documents completely first. "
+        "Only if the relevant policy information is not explicitly found after checking all available documents, "
+        "reply with 'NO_POLICY_MATCH: Information not found in policy documents.' Do not extrapolate or guess.]"
+    )
+
     try:
         resp = requests.post(
             url,
-            json={"message": query, "mode": "query"},
+            json={"message": instructed_message, "mode": "query"},
             headers={"Authorization": f"Bearer {cfg['ANYTHINGLLM_API_KEY']}"},
             timeout=cfg["TOOL_TIMEOUT_SECONDS"],
         )
