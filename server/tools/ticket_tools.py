@@ -82,7 +82,7 @@ def create_ticket(title=None, description=None, priority="medium", category="Gen
 
 
 
-def update_ticket(ticket_id, status=None, priority=None, title=None, description=None):
+def update_ticket(ticket_id, status=None, priority=None, title=None, description=None, resolution_notes=None):
     """Update an existing support ticket's status, priority, or details."""
     try:
         t_id = int(ticket_id)
@@ -101,6 +101,8 @@ def update_ticket(ticket_id, status=None, priority=None, title=None, description
         ticket.title = title.strip()
     if description:
         ticket.description = description.strip()
+    if resolution_notes:
+        ticket.resolution_notes = resolution_notes.strip()
 
     db.session.commit()
     return {
@@ -111,6 +113,7 @@ def update_ticket(ticket_id, status=None, priority=None, title=None, description
             "title": ticket.title,
             "status": ticket.status,
             "priority": ticket.priority,
+            "resolution_notes": ticket.resolution_notes,
         },
     }
 

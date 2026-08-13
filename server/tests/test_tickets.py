@@ -89,3 +89,52 @@ def test_reseed_clears_audit_logs(client, auth_headers):
     tickets = Ticket.query.filter_by(user_id=user.id).all()
     assert len(tickets) > 0
 
+
+def test_patch_resolution_notes_via_rest(client, auth_headers):
+    from server.models import User
+    user = User.query.filter_by(email="me@test.com").first()
+    ticket = Ticket(
+        user_id=user.id,
+        title="VPN down",
+        description="Can't connect to VPN",
+    )
+    db.session.add(ticket)
+    db.session.commit()
+    ticket_id = ticket.id
+
+    res = client.patch(
+        f"/api/tickets/{ticket_id}",
+        headers=auth_headers,
+        json={"status": "resolved", "resolution_notes": "Reset VPN token, reconnect worked."},
+    )
+    assert res.status_code == 200
+    assert res.get_json()["resolution_notes"] == "Reset VPN token, reconnect worked."
+
+    res = client.get("/api/tickets", headers=auth_headers)
+    ticket_data = next(t for t in res.get_json() if t["id"] == ticket_id)
+    assert ticket_data["resolution_notes"] == "Reset VPN token, reconnect worked."
+
+
+def test_agent_update_ticket_stores_resolution_notes(app):
+    from flask import g
+    from server.models import User
+    with app.test_request_context():
+        user = User(email="agent-tool@test.com", password_hash="x")
+        db.session.add(user)
+        db.session.commit()
+        g.user = user
+
+        created = create_ticket(title="Printer jam", description="Paper stuck in tray 2")
+        ticket_id = created["ticket"]["id"]
+
+        result = update_ticket(
+            ticket_id=ticket_id,
+            status="resolved",
+            resolution_notes="Cleared jam, replaced pickup roller.",
+        )
+        assert result["success"] is True
+
+        ticket = db.session.get(Ticket, ticket_id)
+        assert ticket.status == "resolved"
+        assert ticket.resolution_notes == "Cleared jam, replaced pickup roller."
+
