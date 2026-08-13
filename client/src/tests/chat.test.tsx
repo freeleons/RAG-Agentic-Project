@@ -1,8 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "../App";
-import { AuthProvider } from "../auth/AuthContext";
 import { jsonResponse, stubFetch } from "./helpers";
 
 afterEach(() => {
@@ -10,197 +9,53 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const CONV = [{ id: 1, title: "VPN ticket", created_at: "2026-08-03T00:00:00" }];
-const TRACE = [
-  {
-    seq: 1,
-    kind: "llm_call",
-    tool_name: null,
-    arguments: null,
-    result: {},
-    latency_ms: 900,
-  },
-  {
-    seq: 2,
-    kind: "tool_call",
-    tool_name: "search_knowledge",
-    arguments: { query: "vpn" },
-    result: { answer: "reset it", sources: [] },
-    latency_ms: 230,
-  },
+const TICKETS = [
+  { id: 1, requester_name: "Dave", requester_email: "dave@test.com", title: "VPN ticket", description: "VPN issue", status: "open", priority: "medium", category: "IT Support", ticket_number: "T-101", sla_minutes_remaining: 30, created_at: "2026-08-03T00:00:00" }
 ];
 
-async function renderAndOpenConversation(extraRoutes: Parameters<typeof stubFetch>[0]) {
-  localStorage.setItem("agent_token", "jwt-123");
-  localStorage.setItem("agent_email", "me@test.com");
+function renderAuthed(extraRoutes: Parameters<typeof stubFetch>[0] = {}) {
+  localStorage.setItem("apexcare_token", "jwt-123");
   stubFetch({
-    "GET /api/conversations": () => jsonResponse(CONV),
-    "GET /api/conversations/1/messages": () =>
-      jsonResponse({ messages: [], runs: [] }),
+    "GET /api/auth/me": () => jsonResponse({ id: 1, email: "me@test.com", full_name: "Alexandra Vance", department: "HR Operations", role_title: "Lead Support Specialist" }),
+    "GET /api/tickets": () => jsonResponse(TICKETS),
     ...extraRoutes,
   });
-  render(
-    <AuthProvider>
-      <App />
-    </AuthProvider>
-  );
-  await userEvent.click(await screen.findByText("VPN ticket"));
+  return render(<App />);
 }
 
-test("sending a goal renders the answer with a trace chip and fills the panel", async () => {
-  await renderAndOpenConversation({
-    "POST /api/conversations/1/messages": () =>
-      jsonResponse({
-        run_id: 17,
-        status: "completed",
-        answer: "Reset it in Settings.",
-        trace: TRACE,
-      }),
+test("sending a message to Pip renders the response in the copilot chat", async () => {
+  renderAuthed({
+    "POST /api/chat": () => jsonResponse({ reply: "I can help with that! Please look at the VPN policy.", run_id: 42 }),
+    "GET /api/runs/42": () => jsonResponse({ run: { id: 42, status: "completed" }, steps: [] }),
+    "GET /api/runs?page=1&per_page=1": () => jsonResponse({ runs: [] }),
   });
-  await userEvent.type(
-    screen.getByPlaceholderText(/give the agent a goal/i),
-    "How do I reset my VPN?"
-  );
-  await userEvent.click(screen.getByRole("button", { name: /send/i }));
-
-  expect(await screen.findByText("Reset it in Settings.")).toBeInTheDocument();
-  expect(screen.getByTestId("trace-chip-17")).toHaveTextContent("2 steps · 1.1s");
-  expect(screen.getByText(/run #17/i)).toBeInTheDocument();
-  expect(screen.getByText(/#2 · search_knowledge/i)).toBeInTheDocument();
+  
+  expect(await screen.findByText(/I'm Pip, your ApexCare/i)).toBeInTheDocument();
+  
+  const textarea = screen.getByPlaceholderText(/Ask Pip any policy question/i);
+  await userEvent.type(textarea, "How do I reset my VPN?");
+  await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+  
+  expect(await screen.findByText("I can help with that! Please look at the VPN policy.")).toBeInTheDocument();
 });
 
-test("needs_confirmation pauses: approve resolves the placeholder", async () => {
-  await renderAndOpenConversation({
-    "POST /api/conversations/1/messages": () =>
-      jsonResponse({
-        run_id: 18,
-        status: "needs_confirmation",
-        pending_action: {
-          id: 3,
-          tool: "escalate",
-          arguments: { ticket_id: "T-1", priority: "high", reason: "outage" },
-        },
-        trace: TRACE.slice(0, 1),
-      }),
-    "POST /api/runs/18/confirm": () =>
-      jsonResponse({
-        run_id: 18,
-        status: "completed",
-        answer: "Escalated to on-call.",
-        trace: TRACE,
-      }),
+test("triage ticket flow", async () => {
+  renderAuthed({
+    "POST /api/tickets/1/triage": () => jsonResponse({ 
+      ticket: { ...TICKETS[0], status: "draft_pending", draft_reply: "Proposed reply: reset your VPN." }, 
+      run: { id: 101, run_id: 101, status: "completed" } 
+    }),
+    "GET /api/runs/101": () => jsonResponse({ run: { id: 101, run_id: 101, status: "completed" }, steps: [] }),
+    "GET /api/runs?page=1&per_page=1": () => jsonResponse({ runs: [] }),
   });
-  await userEvent.type(
-    screen.getByPlaceholderText(/give the agent a goal/i),
-    "Escalate ticket T-1"
-  );
-  await userEvent.click(screen.getByRole("button", { name: /send/i }));
-
-  expect(
-    await screen.findByText(/waiting for your confirmation/i)
-  ).toBeInTheDocument();
-  expect(screen.getByPlaceholderText(/give the agent a goal/i)).toBeDisabled();
-  expect(screen.getByText(/the agent wants to run/i)).toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole("button", { name: /^approve$/i }));
-  expect(await screen.findByText("Escalated to on-call.")).toBeInTheDocument();
-  expect(screen.queryByText(/waiting for your confirmation/i)).not.toBeInTheDocument();
-  expect(screen.getByPlaceholderText(/give the agent a goal/i)).toBeEnabled();
-});
-
-test("send failure shows a snackbar and preserves the draft", async () => {
-  await renderAndOpenConversation({
-    "POST /api/conversations/1/messages": () =>
-      jsonResponse({ error: "boom" }, 500),
+  
+  await userEvent.click((await screen.findAllByText("VPN ticket"))[0]);
+  
+  const triageBtn = await screen.findByRole("button", { name: /draft with pip/i });
+  await userEvent.click(triageBtn);
+  
+  await waitFor(() => {
+    const textarea = screen.getByPlaceholderText(/Write a reply/i) as HTMLTextAreaElement;
+    expect(textarea.value).toBe("Proposed reply: reset your VPN.");
   });
-  const input = screen.getByPlaceholderText(/give the agent a goal/i);
-  await userEvent.type(input, "hello agent");
-  await userEvent.click(screen.getByRole("button", { name: /send/i }));
-  expect(await screen.findByText("boom")).toBeInTheDocument();
-  expect(input).toHaveValue("hello agent");
-});
-
-test("clicking a trace chip loads the run into the panel", async () => {
-  await renderAndOpenConversation({
-    "POST /api/conversations/1/messages": () =>
-      jsonResponse({ run_id: 17, status: "completed", answer: "Done.", trace: TRACE }),
-    "GET /api/runs/17": () =>
-      jsonResponse({
-        id: 17,
-        status: "completed",
-        model: "llama3.1:8b",
-        total_latency_ms: 1130,
-        created_at: "2026-08-03T00:00:00",
-        steps: TRACE,
-      }),
-  });
-  await userEvent.type(
-    screen.getByPlaceholderText(/give the agent a goal/i),
-    "do it"
-  );
-  await userEvent.click(screen.getByRole("button", { name: /send/i }));
-  await screen.findByText("Done.");
-  await userEvent.click(screen.getByTestId("trace-chip-17"));
-  expect(await screen.findByText(/1\.1s total/i)).toBeInTheDocument();
-});
-
-test("reloading a conversation with a paused run restores the pending confirmation", async () => {
-  await renderAndOpenConversation({
-    "GET /api/conversations/1/messages": () =>
-      jsonResponse({
-        messages: [
-          { id: 1, role: "user", content: "Escalate ticket T-1", created_at: "t1" },
-        ],
-        runs: [{ id: 18, user_message_id: 1, status: "needs_confirmation" }],
-      }),
-    "GET /api/runs/18": () =>
-      jsonResponse({
-        id: 18,
-        status: "needs_confirmation",
-        model: "llama3.1:8b",
-        total_latency_ms: null,
-        created_at: "2026-08-03T00:00:00",
-        steps: TRACE.slice(0, 1),
-        pending_action: {
-          id: 3,
-          tool: "escalate",
-          arguments: { ticket_id: "T-1", priority: "high", reason: "outage" },
-        },
-      }),
-    "POST /api/runs/18/confirm": () =>
-      jsonResponse({
-        run_id: 18,
-        status: "completed",
-        answer: "Escalated to on-call.",
-        trace: TRACE,
-      }),
-  });
-
-  expect(
-    await screen.findByText(/waiting for your confirmation/i)
-  ).toBeInTheDocument();
-  expect(screen.getByPlaceholderText(/give the agent a goal/i)).toBeDisabled();
-  expect(
-    await screen.findByRole("button", { name: /^approve$/i })
-  ).toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole("button", { name: /^approve$/i }));
-  expect(await screen.findByText("Escalated to on-call.")).toBeInTheDocument();
-  expect(screen.queryByText(/waiting for your confirmation/i)).not.toBeInTheDocument();
-  expect(screen.getByPlaceholderText(/give the agent a goal/i)).toBeEnabled();
-});
-
-test("selecting a conversation restores its history with trace chips", async () => {
-  await renderAndOpenConversation({
-    "GET /api/conversations/1/messages": () =>
-      jsonResponse({
-        messages: [
-          { id: 1, role: "user", content: "reset vpn?", created_at: "t1" },
-          { id: 2, role: "assistant", content: "In Settings.", created_at: "t2" },
-        ],
-        runs: [{ id: 10, user_message_id: 1, status: "completed" }],
-      }),
-  });
-  expect(await screen.findByText("In Settings.")).toBeInTheDocument();
-  expect(screen.getByTestId("trace-chip-10")).toBeInTheDocument();
 });
