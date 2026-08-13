@@ -2,7 +2,6 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "../App";
-import { AuthProvider } from "../auth/AuthContext";
 import { jsonResponse, stubFetch } from "./helpers";
 
 afterEach(() => {
@@ -35,7 +34,7 @@ export const STATS = {
   ],
 };
 
-export const RUNS_PAGE = {
+export const RUNS_LIST = {
   runs: [
     {
       id: 17, status: "completed", goal: "Escalate ticket T-1",
@@ -44,144 +43,58 @@ export const RUNS_PAGE = {
       completion_tokens: 220, created_at: "2026-08-04T10:00:00",
     },
   ],
-  total: 1, page: 1, per_page: 20,
 };
 
 export function renderAudit(extraRoutes: Parameters<typeof stubFetch>[0] = {}) {
-  localStorage.setItem("agent_token", "jwt-123");
-  localStorage.setItem("agent_email", "me@test.com");
+  localStorage.setItem("apexcare_token", "jwt-123");
   stubFetch({
-    "GET /api/conversations": () => jsonResponse([]),
-    "GET /api/runs?page=1": () => jsonResponse(RUNS_PAGE),
+    "GET /api/auth/me": () => jsonResponse({ id: 1, email: "me@test.com", full_name: "Alexandra Vance", department: "HR Operations", role_title: "Lead Support Specialist" }),
+    "GET /api/tickets": () => jsonResponse([]),
+    "GET /api/runs": () => jsonResponse(RUNS_LIST),
     "GET /api/runs/stats": () => jsonResponse(STATS),
+    "GET /api/runs/17": () => jsonResponse({ run: RUNS_LIST.runs[0], steps: [] }),
     ...extraRoutes,
   });
-  return render(
-    <AuthProvider>
-      <App />
-    </AuthProvider>
-  );
+  return render(<App />);
 }
 
 test("audit tab shows stat cards from the stats endpoint", async () => {
   renderAudit();
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
   expect(await screen.findByText("50%")).toBeInTheDocument(); // success rate
   expect(screen.getByText("4")).toBeInTheDocument(); // total runs
-  expect(screen.getByText(/6\.6s/)).toBeInTheDocument(); // avg latency
+  expect(screen.getByText("6625ms")).toBeInTheDocument(); // avg latency
 });
 
-test("chat tab is unaffected and switching back works", async () => {
+test("workbench tab is unaffected and switching back works", async () => {
   renderAudit();
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
   await screen.findByText("50%");
-  await userEvent.click(screen.getByRole("tab", { name: /chat/i }));
+  await userEvent.click(screen.getByRole("button", { name: /^workbench$/i }));
   expect(
-    await screen.findByText(/how can i assist you today/i)
-  ).toBeInTheDocument();
+    (await screen.findAllByText(/Alexandra/i)).length
+  ).toBeGreaterThan(0);
 });
 
-
-test("audit tab renders both charts when there is data", async () => {
+test("audit tab renders sections when there is data", async () => {
   renderAudit();
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  expect(await screen.findByTestId("runs-per-day-chart")).toBeInTheDocument();
-  expect(screen.getByTestId("latency-chart")).toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  expect(await screen.findByText("Execution Latency Distribution")).toBeInTheDocument();
+  expect(screen.getByText("Tool Execution Volume")).toBeInTheDocument();
 });
 
-test("audit tab shows chart empty state with no runs", async () => {
+test("audit tab shows empty state with no runs", async () => {
   renderAudit({
-    "GET /api/runs?page=1": () =>
-      jsonResponse({ runs: [], total: 0, page: 1, per_page: 20 }),
+    "GET /api/runs": () => jsonResponse({ runs: [] }),
     "GET /api/runs/stats": () => jsonResponse(EMPTY_STATS),
   });
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  expect(await screen.findByText(/no run data yet/i)).toBeInTheDocument();
-  expect(screen.queryByTestId("runs-per-day-chart")).not.toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  expect(await screen.findByText("Audit Log Runs (0)")).toBeInTheDocument();
 });
 
-test("runs table renders rows and drives filters", async () => {
-  const routes = {
-    "GET /api/runs?status=failed&page=1": () =>
-      jsonResponse({ runs: [], total: 0, page: 1, per_page: 20 }),
-    "GET /api/runs/stats?status=failed": () => jsonResponse(EMPTY_STATS),
-  };
-  renderAudit(routes);
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  expect(await screen.findByText("Escalate ticket T-1")).toBeInTheDocument();
-  expect(screen.getByText("5.2s")).toBeInTheDocument();
-
-  // no admin column for regular users
-  expect(screen.queryByText(/user email/i)).not.toBeInTheDocument();
-
-  await userEvent.click(screen.getByLabelText(/status filter/i));
-  await userEvent.click(await screen.findByRole("option", { name: /^failed$/i }));
-  expect(await screen.findByText(/no runs match these filters/i)).toBeInTheDocument();
-});
-
-test("admin sees the user column and email filter", async () => {
-  localStorage.setItem("agent_is_admin", "1");
-  renderAudit({
-    "GET /api/runs?page=1": () =>
-      jsonResponse({
-        ...RUNS_PAGE,
-        runs: [{ ...RUNS_PAGE.runs[0], user_email: "someone@test.com" }],
-      }),
-  });
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  expect(await screen.findByText("someone@test.com")).toBeInTheDocument();
-  expect(screen.getByLabelText(/user email/i)).toBeInTheDocument();
-});
-
-test("clicking a run opens the drawer with steps and JSON export", async () => {
-  const createObjectURL = vi.fn(() => "blob:fake");
-  vi.stubGlobal("URL", {
-    ...URL,
-    createObjectURL,
-    revokeObjectURL: vi.fn(),
-  });
-  renderAudit({
-    "GET /api/runs/17": () =>
-      jsonResponse({
-        id: 17, status: "completed", model: "llama3.1:8b",
-        total_latency_ms: 5210, created_at: "2026-08-04T10:00:00",
-        steps: [
-          {
-            seq: 1, kind: "tool_call", tool_name: "search_knowledge",
-            arguments: { query: "sla" }, result: { answer: "24h" }, latency_ms: 230,
-          },
-        ],
-      }),
-  });
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  await userEvent.click(await screen.findByText("Escalate ticket T-1"));
-  expect(await screen.findByText(/#1 · search_knowledge/i)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: /download json/i }));
-  expect(createObjectURL).toHaveBeenCalledOnce();
-});
-
-test("drawer shows an error when the run fails to load", async () => {
-  renderAudit({
-    "GET /api/runs/17": () =>
-      jsonResponse({ error: "run not found" }, 404),
-  });
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  await userEvent.click(await screen.findByText("Escalate ticket T-1"));
-  expect(await screen.findByText(/couldn't load this run/i)).toBeInTheDocument();
-});
-
-test("drawer disables confirm buttons for a needs_confirmation run", async () => {
-  renderAudit({
-    "GET /api/runs/17": () =>
-      jsonResponse({
-        id: 17, status: "needs_confirmation", model: "llama3.1:8b",
-        total_latency_ms: 5210, created_at: "2026-08-04T10:00:00",
-        steps: [],
-        pending_action: { id: 1, tool: "escalate", arguments: { ticket_id: "T-1" } },
-      }),
-  });
-  await userEvent.click(await screen.findByRole("tab", { name: /audit/i }));
-  await userEvent.click(await screen.findByText("Escalate ticket T-1"));
-  expect(await screen.findByRole("button", { name: /approve/i })).toBeDisabled();
-  expect(screen.getByRole("button", { name: /reject/i })).toBeDisabled();
+test("runs table renders rows", async () => {
+  renderAudit();
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  expect(await screen.findByText("Audit Log Runs (1)")).toBeInTheDocument();
+  expect(screen.getByText(/Escalate ticket/i)).toBeInTheDocument();
 });

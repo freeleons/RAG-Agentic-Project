@@ -10,5 +10,5 @@ test("renders the auth screen when logged out", () => {
     </AuthProvider>
   );
   expect(screen.getByText(/triage agent/i)).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: /log in/i })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /register profile/i })).toBeInTheDocument();
 });

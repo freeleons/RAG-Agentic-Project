@@ -118,7 +118,8 @@ export async function fetchTickets(params?: {
   if (params?.category) query.set("category", params.category);
   if (params?.q) query.set("q", params.q);
 
-  return apiFetch<Ticket[]>(`/api/tickets?${query.toString()}`);
+  const qs = query.toString();
+  return apiFetch<Ticket[]>(`/api/tickets${qs ? `?${qs}` : ""}`);
 }
 
 export async function createTicket(ticketData: Partial<Ticket>): Promise<Ticket> {
