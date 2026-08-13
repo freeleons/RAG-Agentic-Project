@@ -14,6 +14,9 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    full_name = db.Column(db.String(120), default="Support Specialist")
+    department = db.Column(db.String(100), default="HR Operations")
+    role_title = db.Column(db.String(100), default="Lead Support Specialist")
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 
@@ -25,7 +28,6 @@ class Conversation(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     messages = db.relationship("Message", backref="conversation", order_by="Message.id")
-
 
 
 class Message(db.Model):
@@ -78,16 +80,25 @@ class PendingAction(db.Model):
 class Ticket(db.Model):
     __tablename__ = "tickets"
     id = db.Column(db.Integer, primary_key=True)
+    ticket_number = db.Column(db.String(50), default="APX-1001")
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    requester_name = db.Column(db.String(120), default="Jane Doe")
+    requester_email = db.Column(db.String(120), default="jane.doe@apexcare.tech")
+    requester_department = db.Column(db.String(100), default="Commercial Operations")
     title = db.Column(db.String(120), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    status = db.Column(db.String(20), nullable=False, default="open")
-    priority = db.Column(db.String(20), nullable=False, default="medium")
-    category = db.Column(db.String(50), nullable=False, default="General")
-    resolution_notes = db.Column(db.Text)
-    kb_synced_at = db.Column(db.DateTime(timezone=True))
+    status = db.Column(db.String(32), nullable=False, default="open")  # open | in_triage | draft_pending | escalated | resolved
+    priority = db.Column(db.String(20), nullable=False, default="medium")  # low | medium | high | urgent
+    category = db.Column(db.String(50), nullable=False, default="HR & Benefits")  # HR & Benefits | IT Support | Billing & Expenses | General
+    channel = db.Column(db.String(50), default="Workday Portal")  # Workday Portal | Slack HR Connect | Email | Helpdesk
+    sla_minutes_remaining = db.Column(db.Integer, default=120)
+    draft_reply = db.Column(db.Text, nullable=True)
+    draft_confidence = db.Column(db.Integer, default=95)
+    escalation_reason = db.Column(db.Text, nullable=True)
+    replies_json = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user = db.relationship("User", backref="tickets")
+
 

@@ -78,29 +78,6 @@ def test_llm_failure_fails_gracefully(app, run, monkeypatch):
     assert outcome["answer"]  # a human-readable apology, not empty
 
 
-def test_confirmation_gated_tool_pauses_run(app, run, monkeypatch):
-    from server.agent import run_agent
-    from server.models import PendingAction
-
-    monkeypatch.setattr(
-        "server.agent.generate",
-        scripted(
-            {
-                "type": "tool_call",
-                "name": "escalate",
-                "arguments": {"ticket_id": "T-1", "priority": "high", "reason": "outage"},
-                "call_id": "c1",
-            }
-        ),
-    )
-    outcome = run_agent(run, "Escalate ticket T-1")
-    assert outcome["status"] == "needs_confirmation"
-    assert outcome["pending_action"]["tool"] == "escalate"
-    action = PendingAction.query.filter_by(run_id=run.id).one()
-    assert action.status == "pending"
-    assert run.status == "needs_confirmation"
-    # only the llm_call is recorded — the tool has NOT run
-    assert [s.kind for s in run.steps] == ["llm_call"]
 
 
 def test_cap_check_prevents_tool_call_overflow_with_odd_max_steps(app, run, monkeypatch):

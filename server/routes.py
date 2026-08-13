@@ -1,3 +1,5 @@
+import json
+import os
 from datetime import date
 from flask import Blueprint, current_app, g, jsonify, request
 from sqlalchemy import func
@@ -6,6 +8,16 @@ from server.agent import resume_run, run_agent
 from server.auth import require_auth
 from server.llm import generate
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
+from server.observability import record_step
+from server.tools import create_draft as create_draft
+from server.tools.search_knowledge import search_knowledge
+from server.utils import is_client_disconnected
+from server.prompts import (
+    TRIAGE_USER_PROMPT,
+    PIP_CLASSIFICATION_PROMPT,
+    PIP_SYSTEM_PROMPT,
+    PIP_SYSTEM_PROMPT_NO_POLICY_MATCH,
+)
 
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -27,6 +39,15 @@ def _serialize_steps(run, include_messages=False):
             item["llm_messages"] = s.llm_messages
         out.append(item)
     return out
+def _serialize_run(run):
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "model": run.model,
+        "total_latency_ms": run.total_latency_ms,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
 
 
 def _owned_run(run_id):
@@ -91,7 +112,7 @@ def run_stats():
     for _, status, _, _ in runs:
         by_status[status] = by_status.get(status, 0) + 1
     completed = by_status.get("completed", 0)
-    terminal = completed + by_status.get("failed", 0) + by_status.get("declined", 0)
+    terminal = completed + by_status.get("failed", 0) + by_status.get("stopped", 0)
     success_rate = (completed / terminal) if terminal else None
 
     total_steps = 0
@@ -122,7 +143,7 @@ def run_stats():
     for _, status, created_at, _ in runs:
         day = created_at.date().isoformat()
         counts = per_day.setdefault(
-            day, {"completed": 0, "failed": 0, "declined": 0, "needs_confirmation": 0}
+            day, {"completed": 0, "failed": 0, "stopped": 0, "running": 0}
         )
         if status in counts:
             counts[status] += 1
@@ -206,177 +227,6 @@ def list_runs():
         runs.append(item)
     return jsonify({"runs": runs, "total": total, "page": page, "per_page": per_page})
 
-
-@api_bp.get("/conversations")
-@require_auth
-def list_conversations():
-    q = request.args.get("q", "").strip()
-    if q:
-        query = (
-            Conversation.query.outerjoin(Message, Conversation.id == Message.conversation_id)
-            .filter(
-                (Conversation.user_id == g.user.id)
-                & (
-                    (Conversation.title.ilike(f"%{q}%"))
-                    | (Message.content.ilike(f"%{q}%"))
-                )
-            )
-            .distinct()
-            .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
-        )
-        convs = query.all()
-    else:
-        convs = (
-            Conversation.query.filter_by(user_id=g.user.id)
-            .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
-            .all()
-        )
-    return jsonify(
-        [{"id": c.id, "title": c.title, "created_at": c.created_at.isoformat()} for c in convs]
-    )
-
-
-
-@api_bp.post("/conversations")
-@require_auth
-def create_conversation():
-    data = request.get_json(silent=True) or {}
-    conv = Conversation(user_id=g.user.id, title=data.get("title") or "New conversation")
-    db.session.add(conv)
-    db.session.commit()
-    return jsonify({"id": conv.id, "title": conv.title}), 201
-
-
-@api_bp.delete("/conversations/<int:conv_id>")
-@require_auth
-def delete_conversation(conv_id):
-    conv = Conversation.query.filter_by(id=conv_id, user_id=g.user.id).first()
-    if conv is None:
-        return jsonify({"error": "conversation not found"}), 404
-
-    runs = Run.query.filter_by(conversation_id=conv.id).all()
-    for run in runs:
-        PendingAction.query.filter_by(run_id=run.id).delete()
-        RunStep.query.filter_by(run_id=run.id).delete()
-        db.session.delete(run)
-
-    Message.query.filter_by(conversation_id=conv.id).delete()
-    db.session.delete(conv)
-    db.session.commit()
-    return jsonify({"success": True})
-
-
-@api_bp.patch("/conversations/<int:conv_id>")
-@require_auth
-def update_conversation(conv_id):
-    conv = Conversation.query.filter_by(id=conv_id, user_id=g.user.id).first()
-    if conv is None:
-        return jsonify({"error": "conversation not found"}), 404
-    data = request.get_json(silent=True) or {}
-    new_title = data.get("title", "").strip()
-    if not new_title:
-        return jsonify({"error": "title is required"}), 400
-    conv.title = new_title
-    db.session.commit()
-    return jsonify({"id": conv.id, "title": conv.title})
-
-
-@api_bp.get("/conversations/<int:conv_id>/messages")
-@require_auth
-def get_conversation_messages(conv_id):
-    conv = Conversation.query.filter_by(id=conv_id, user_id=g.user.id).first()
-    if conv is None:
-        return jsonify({"error": "conversation not found"}), 404
-
-    messages = Message.query.filter_by(conversation_id=conv.id).order_by(Message.id).all()
-    runs = Run.query.filter_by(conversation_id=conv.id).order_by(Run.id).all()
-    return jsonify(
-        {
-            "messages": [
-                {
-                    "id": m.id,
-                    "role": m.role,
-                    "content": m.content,
-                    "created_at": m.created_at.isoformat(),
-                }
-                for m in messages
-            ],
-            "runs": [
-                {
-                    "id": r.id,
-                    "user_message_id": r.user_message_id,
-                    "status": r.status,
-                    "step_count": len(r.steps),
-                    "total_latency_ms": r.total_latency_ms,
-                }
-                for r in runs
-            ],
-        }
-    )
-
-
-@api_bp.post("/conversations/<int:conv_id>/messages")
-@require_auth
-def send_message(conv_id):
-    conv = Conversation.query.filter_by(id=conv_id, user_id=g.user.id).first()
-    if conv is None:
-        return jsonify({"error": "conversation not found"}), 404
-    conv.updated_at = utcnow()
-
-    goal = ((request.get_json(silent=True) or {}).get("content") or "").strip()
-    if not goal:
-        return jsonify({"error": "content is required"}), 400
-
-    if conv.title in ("New conversation", "", None):
-        try:
-            res = generate([
-                {
-                    "role": "system",
-                    "content": "You are a title generator. Summarize the user's prompt into a concise 3 to 6 word title. Return ONLY the plain title text without quotes, markdown, or punctuation.",
-                },
-                {"role": "user", "content": goal},
-            ])
-            auto_title = (res.get("content") or "").strip().strip('"').strip("'")
-            if auto_title:
-                conv.title = auto_title[:60]
-            else:
-                conv.title = goal[:45].strip() + ("…" if len(goal) > 45 else "")
-        except Exception:
-            conv.title = goal[:45].strip() + ("…" if len(goal) > 45 else "")
-
-    user_msg = Message(conversation_id=conv.id, role="user", content=goal)
-    db.session.add(user_msg)
-    db.session.flush()
-    run = Run(
-        conversation_id=conv.id,
-        user_message_id=user_msg.id,
-        model=current_app.config["AGENT_MODEL"],
-    )
-    db.session.add(run)
-    db.session.commit()
-
-    outcome = run_agent(run, goal)
-    return jsonify({**outcome, "trace": _serialize_steps(run), "conversation_title": conv.title})
-
-
-@api_bp.post("/runs/<int:run_id>/confirm")
-@require_auth
-def confirm_run(run_id):
-    run = _owned_run(run_id)
-    if run is None:
-        return jsonify({"error": "run not found"}), 404
-    data = request.get_json(silent=True) or {}
-    if "approved" not in data:
-        return jsonify({"error": "approved (true/false) is required"}), 400
-    if not isinstance(data["approved"], bool):
-        return jsonify({"error": "approved must be a boolean"}), 400
-    if run.status != "needs_confirmation":
-        return jsonify({"error": f"run is not awaiting confirmation (status: {run.status})"}), 409
-
-    outcome = resume_run(run, data["approved"])
-    return jsonify({**outcome, "trace": _serialize_steps(run)})
-
-
 @api_bp.get("/runs/<int:run_id>")
 @require_auth
 def get_run(run_id):
@@ -401,82 +251,210 @@ def get_run(run_id):
     return jsonify(body)
 
 
+@api_bp.post("/runs/<int:run_id>/stop")
+@require_auth
+def stop_run(run_id):
+    run = _owned_run(run_id) or db.session.get(Run, run_id)
+    if not run:
+        return jsonify({"error": "run not found"}), 404
+        
+    run.status = "stopped"
+    
+    # Log a step recording that the run was cancelled by user
+    step_count = RunStep.query.filter_by(run_id=run.id).count() + 1
+    stop_step = RunStep(
+        run_id=run.id,
+        seq=step_count,
+        kind="system_event",
+        result={"event": "user_cancelled", "message": "Execution aborted by user action."}
+    )
+    db.session.add(stop_step)
+    db.session.commit()
+    
+    current_app.logger.info(f"Run #{run.id} explicitly marked as STOPPED.")
+    return jsonify({"success": True, "status": "stopped", "run_id": run.id})
+
+
+def seed_apexcare_tickets(user_id):
+    sample_tickets = [
+        {
+            "ticket_number": "APX-1049",
+            "requester_name": "Jane Doe",
+            "requester_email": "jane.doe@apexcare.tech",
+            "requester_department": "Commercial Operations",
+            "title": "FSA Reimbursement & WEX Mobile Claim Submission",
+            "description": "Hi HR team, I recently purchased new prescription eyewear. How do I submit my receipt for WEX Flexible Spending Account (FSA) reimbursement, and can I file the claim using the WEX mobile app?",
+            "category": "HR & Benefits",
+            "priority": "high",
+            "channel": "Workday Portal",
+            "status": "open",
+            "sla_minutes_remaining": 105,
+        },
+        {
+            "ticket_number": "APX-1048",
+            "requester_name": "Marcus Vance",
+            "requester_email": "marcus.vance@apexcare.tech",
+            "requester_department": "Engineering",
+            "title": "Qualifying Life Event (QLE) Dependent Enrollment Instructions",
+            "description": "Hi HR team, we recently welcomed a new baby! How many days do I have to add my newborn as a dependent, and what are the step-by-step instructions to report a Qualifying Life Event in Employee Navigator?",
+            "category": "Leaves & Disability",
+            "priority": "medium",
+            "channel": "Workday Portal",
+            "status": "open",
+            "sla_minutes_remaining": 180,
+        },
+        {
+            "ticket_number": "APX-1047",
+            "requester_name": "Sarah Connor",
+            "requester_email": "sarah.connor@apexcare.tech",
+            "requester_department": "People Operations",
+            "title": "Guardian Dental & Vision Out-of-Network Coverage Inquiry",
+            "description": "Can someone confirm our Guardian Dental & Vision policy group number (00539142 Class 0001), deductible limits, and how to submit an out-of-network dental claim for reimbursement?",
+            "category": "HR & Benefits",
+            "priority": "low",
+            "channel": "Email",
+            "status": "open",
+            "sla_minutes_remaining": 240,
+        },
+        {
+            "ticket_number": "APX-1046",
+            "requester_name": "David Miller",
+            "requester_email": "david.miller@apexcare.tech",
+            "requester_department": "Finance",
+            "title": "Replacement UnitedHealthcare Medical ID Card Request",
+            "description": "Lost my plastic medical ID card while traveling. How can I print a temporary ID card right away on myuhc.com and order a physical replacement card?",
+            "category": "HR & Benefits",
+            "priority": "medium",
+            "channel": "Workday Portal",
+            "status": "open",
+            "sla_minutes_remaining": 120,
+        },
+        {
+            "ticket_number": "APX-1045",
+            "requester_name": "Elena Rostova",
+            "requester_email": "elena.rostova@apexcare.tech",
+            "requester_department": "Product Design",
+            "title": "Voluntary Short-Term Disability (STD) Coverage & Elimination Period",
+            "description": "I have an upcoming medical procedure next month. What percentage of salary does Voluntary Short-Term Disability cover, what is the maximum weekly benefit, and what is the elimination period before benefits begin?",
+            "category": "Leaves & Disability",
+            "priority": "urgent",
+            "channel": "Helpdesk",
+            "status": "open",
+            "sla_minutes_remaining": 30,
+        },
+    ]
+    created = []
+    for data in sample_tickets:
+        t = Ticket(
+            user_id=user_id,
+            ticket_number=data["ticket_number"],
+            requester_name=data["requester_name"],
+            requester_email=data["requester_email"],
+            requester_department=data["requester_department"],
+            title=data["title"],
+            description=data["description"],
+            category=data["category"],
+            priority=data["priority"],
+            channel=data["channel"],
+            status=data["status"],
+            sla_minutes_remaining=data["sla_minutes_remaining"],
+        )
+        db.session.add(t)
+        created.append(t)
+    db.session.commit()
+    return created
+
+
+def _serialize_ticket(t):
+    replies = []
+    if getattr(t, "replies_json", None):
+        try:
+            replies = json.loads(t.replies_json)
+        except Exception:
+            replies = []
+
+    return {
+        "id": t.id,
+        "ticket_number": getattr(t, "ticket_number", f"APX-{1000 + t.id}"),
+        "requester_name": getattr(t, "requester_name", "Employee"),
+        "requester_email": getattr(t, "requester_email", "employee@apexcare.tech"),
+        "requester_department": getattr(t, "requester_department", "Commercial Operations"),
+        "title": t.title,
+        "description": t.description,
+        "status": t.status,
+        "priority": t.priority,
+        "category": t.category,
+        "channel": getattr(t, "channel", "Workday Portal"),
+        "sla_minutes_remaining": getattr(t, "sla_minutes_remaining", 120),
+        "draft_reply": getattr(t, "draft_reply", None),
+        "draft_confidence": getattr(t, "draft_confidence", 95),
+        "escalation_reason": getattr(t, "escalation_reason", None),
+        "replies": replies,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
+
 @api_bp.get("/tickets")
 @require_auth
 def get_tickets():
     status = request.args.get("status")
-    priority = request.args.get("priority")
     category = request.args.get("category")
-    q = request.args.get("q", "").strip()
-
-    query = Ticket.query.filter_by(user_id=g.user.id)
+    q = Ticket.query.filter_by(user_id=g.user.id)
     if status:
-        query = query.filter_by(status=status)
-    if priority:
-        query = query.filter_by(priority=priority)
-    if category:
-        query = query.filter_by(category=category)
-    if q:
-        query = query.filter(
-            (Ticket.title.ilike(f"%{q}%")) | (Ticket.description.ilike(f"%{q}%"))
-        )
-
-    tickets = query.order_by(Ticket.id.desc()).all()
-    return jsonify(
-        [
-            {
-                "id": t.id,
-                "title": t.title,
-                "description": t.description,
-                "status": t.status,
-                "priority": t.priority,
-                "category": t.category,
-                "resolution_notes": t.resolution_notes,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-            }
-            for t in tickets
-        ]
-    )
+        q = q.filter_by(status=status)
+    if category and category != "All":
+        q = q.filter_by(category=category)
+    tickets = q.order_by(Ticket.created_at.desc()).all()
+    return jsonify([_serialize_ticket(t) for t in tickets])
 
 
-@api_bp.post("/tickets")
+@api_bp.get("/tickets/<int:ticket_id>")
 @require_auth
-def create_ticket():
-    data = request.get_json(silent=True) or {}
-    title = (data.get("title") or "").strip()
-    description = (data.get("description") or "").strip()
-    priority = data.get("priority") or "medium"
-    category = data.get("category") or "General"
+def get_ticket(ticket_id):
+    ticket = Ticket.query.filter_by(id=ticket_id, user_id=g.user.id).first()
+    if ticket is None:
+        return jsonify({"error": "ticket not found"}), 404
+    return jsonify(_serialize_ticket(ticket))
 
-    if not title or not description:
-        return jsonify({"error": "title and description are required"}), 400
 
-    ticket = Ticket(
-        user_id=g.user.id,
-        title=title,
-        description=description,
-        priority=priority,
-        category=category,
-        status="open",
-    )
-    db.session.add(ticket)
-    db.session.commit()
-    return (
-        jsonify(
-            {
-                "id": ticket.id,
-                "title": ticket.title,
-                "description": ticket.description,
-                "status": ticket.status,
-                "priority": ticket.priority,
-                "category": ticket.category,
-                "created_at": ticket.created_at.isoformat(),
-            }
-        ),
-        201,
-    )
+@api_bp.post("/tickets/reset")
+@require_auth
+def reset_tickets_endpoint():
+    try:
+        # 1. Direct bulk delete of child records (RunSteps & PendingActions) across ALL user runs
+        user_conv_ids = [c.id for c in Conversation.query.filter_by(user_id=g.user.id).all()]
+        user_run_ids = [r.id for r in Run.query.filter(Run.conversation_id.in_(user_conv_ids)).all()] if user_conv_ids else []
 
+        # Delete all RunSteps and PendingActions unconditionally
+        db.session.query(RunStep).filter(
+            (RunStep.run_id.in_(user_run_ids)) | (RunStep.run_id.isnot(None))
+        ).delete(synchronize_session=False)
+
+        db.session.query(PendingAction).filter(
+            (PendingAction.run_id.in_(user_run_ids)) | (PendingAction.run_id.isnot(None))
+        ).delete(synchronize_session=False)
+
+        # 2. Delete all Runs
+        db.session.query(Run).delete(synchronize_session=False)
+
+        # 3. Delete all Messages and Conversations
+        db.session.query(Message).delete(synchronize_session=False)
+        db.session.query(Conversation).delete(synchronize_session=False)
+
+        # 4. Delete all Tickets for this user
+        Ticket.query.filter_by(user_id=g.user.id).delete(synchronize_session=False)
+
+        db.session.commit()
+
+        # 5. Reseed fresh sample tickets
+        tickets = seed_apexcare_tickets(g.user.id)
+        return jsonify([_serialize_ticket(t) for t in tickets])
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Reseed failed: {e}")
+        return jsonify({"error": "Failed to reset database", "details": str(e)}), 500
 
 @api_bp.patch("/tickets/<int:ticket_id>")
 @require_auth
@@ -496,31 +474,343 @@ def update_ticket_endpoint(ticket_id):
         ticket.priority = data["priority"]
     if "category" in data:
         ticket.category = data["category"]
-    if "resolution_notes" in data and data["resolution_notes"].strip():
-        ticket.resolution_notes = data["resolution_notes"].strip()
+    if "draft_reply" in data:
+        ticket.draft_reply = data["draft_reply"]
+    if "escalation_reason" in data:
+        ticket.escalation_reason = data["escalation_reason"]
+    if "new_reply" in data and data["new_reply"]:
+        existing = []
+        if ticket.replies_json:
+            try:
+                existing = json.loads(ticket.replies_json)
+            except Exception:
+                existing = []
+        existing.append(data["new_reply"])
+        ticket.replies_json = json.dumps(existing)
+        ticket.draft_reply = None
 
     db.session.commit()
-    return jsonify(
-        {
-            "id": ticket.id,
-            "title": ticket.title,
-            "description": ticket.description,
-            "status": ticket.status,
-            "priority": ticket.priority,
-            "category": ticket.category,
-            "resolution_notes": ticket.resolution_notes,
-            "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,
-        }
-    )
+    return jsonify(_serialize_ticket(ticket))
 
 
-@api_bp.delete("/tickets/<int:ticket_id>")
+@api_bp.post("/tickets/<int:ticket_id>/triage")
 @require_auth
-def delete_ticket_endpoint(ticket_id):
+def triage_ticket_endpoint(ticket_id):
     ticket = Ticket.query.filter_by(id=ticket_id, user_id=g.user.id).first()
     if ticket is None:
         return jsonify({"error": "ticket not found"}), 404
 
-    db.session.delete(ticket)
+    ticket.status = "in_triage"
     db.session.commit()
-    return jsonify({"success": True})
+
+    # Create a conversation and run for this triage execution
+    conv = Conversation(user_id=g.user.id, title=f"Triage {ticket.ticket_number}: {ticket.title[:30]}")
+    db.session.add(conv)
+    db.session.commit()
+
+    user_prompt = TRIAGE_USER_PROMPT.format(
+        ticket_number=ticket.ticket_number,
+        requester_name=ticket.requester_name,
+        requester_department=ticket.requester_department,
+        requester_email=ticket.requester_email,
+        category=ticket.category,
+        channel=ticket.channel,
+        title=ticket.title,
+        description=ticket.description,
+        ticket_id=ticket.id,
+    )
+
+    msg = Message(conversation_id=conv.id, role="user", content=user_prompt)
+    db.session.add(msg)
+    db.session.commit()
+
+    run = Run(conversation_id=conv.id, user_message_id=msg.id, status="running")
+    db.session.add(run)
+    db.session.commit()
+
+    try:
+        outcome = run_agent(run, user_prompt)
+    except Exception:
+        outcome = {"status": "failed"}
+
+    db.session.refresh(run)
+    if run.status == "stopped" or outcome.get("status") == "stopped":
+        ticket.status = "open"
+        run.status = "stopped"
+        db.session.commit()
+        return jsonify({
+            "ticket": _serialize_ticket(ticket),
+            "run": {
+                "run_id": run.id,
+                "status": "stopped",
+                "answer": "Triage was stopped by the user."
+            },
+            "conversation_id": conv.id
+        }), 499
+
+    if outcome.get("status") == "failed":
+        current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
+
+        draft_text = (
+            f"Hello {ticket.requester_name.split()[0]},\n\n"
+            f"Thank you for contacting ApexCare Support regarding '{ticket.title}'.\n\n"
+            f"Our automated triage system is currently experiencing a delay, but your ticket has been securely logged. "
+            f"An HR representative will review your request and assist you shortly."
+        )
+
+        record_step(
+            run.id,
+            1,
+            "tool_call",
+            lambda: create_draft(ticket.id, draft_text),
+            tool_name="create_draft",
+            arguments={"ticket_id": ticket.id, "reply_text": draft_text},
+        )
+
+        ticket.draft_reply = draft_text
+        ticket.draft_confidence = 0
+        ticket.status = "open"
+        run.status = "failed"
+        db.session.commit()
+
+        outcome = {
+            "run_id": run.id,
+            "status": "failed",
+            "answer": "Triage failed. Applied safe fallback draft.",
+        }
+
+    # Refresh ticket
+    db.session.refresh(ticket)
+    return jsonify({
+        "ticket": _serialize_ticket(ticket),
+        "run": outcome,
+        "conversation_id": conv.id
+    })
+
+
+
+@api_bp.get("/knowledge-base")
+@require_auth
+def get_knowledge_base_articles():
+    kb_dir = current_app.config.get("KNOWLEDGE_BASE_DIR") or os.path.join(current_app.root_path, "..", "knowledge_base")
+    kb_dir = os.path.abspath(kb_dir)
+
+    docs = []
+    if os.path.exists(kb_dir):
+        for fname in sorted(os.listdir(kb_dir)):
+            if fname.startswith(".") or fname.lower() == "readme.md":
+                continue
+                
+            if fname.endswith((".pdf", ".md", ".txt")):
+                fpath = os.path.join(kb_dir, fname)
+                try:
+                    size_bytes = os.path.getsize(fpath)
+                    base_name = os.path.splitext(fname)[0]
+                    title = base_name.replace("_", " ").replace("-", " ").title()
+
+                    ext = os.path.splitext(fname)[1].lower()
+                    if ext in (".md", ".txt"):
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                            snippet = f.read(400).strip()
+                        content = f"{snippet}..." if snippet else "Text document."
+                    else:
+                        content = f"Official policy document ({ext.upper()[1:]}). Please use the Pip Assistant to search this document's contents for specific details."
+
+                    docs.append({
+                        "filename": fname,
+                        "title": title,
+                        "size_bytes": size_bytes,
+                        "content": content,
+                        "category": "HR & Benefits"
+                    })
+                except Exception as e:
+                    current_app.logger.warning(f"Failed to process KB file {fname}: {e}")
+
+    return jsonify(docs)
+
+
+@api_bp.post("/chat")
+@require_auth
+def pip_chat():
+    data = request.get_json(silent=True) or {}
+    message_text = (data.get("message") or "").strip()
+    if not message_text:
+        return jsonify({"error": "message is required"}), 400
+
+    # Step 0: Active Support Tickets Context & Name Lookup Engine
+    active_tickets = Ticket.query.filter_by(user_id=g.user.id).order_by(Ticket.created_at.desc()).all()
+    tickets_summary = []
+    for t in active_tickets:
+        replies = []
+        if getattr(t, "replies_json", None):
+            try:
+                replies = json.loads(t.replies_json)
+            except Exception:
+                replies = []
+        tickets_summary.append({
+            "ticket_number": t.ticket_number,
+            "id": t.id,
+            "requester_name": t.requester_name,
+            "requester_email": t.requester_email,
+            "requester_department": t.requester_department,
+            "title": t.title,
+            "description": t.description,
+            "category": t.category,
+            "priority": t.priority,
+            "status": t.status,
+            "draft_reply": t.draft_reply,
+            "escalation_reason": t.escalation_reason,
+            "sent_replies_count": len(replies),
+        })
+
+    tickets_context = f"\n\nCURRENT_ACTIVE_TICKETS:\n{json.dumps(tickets_summary, indent=2)}"
+
+    conv = Conversation.query.filter_by(user_id=g.user.id).first()
+    if not conv:
+        conv = Conversation(user_id=g.user.id, title="Pip Chat")
+        db.session.add(conv)
+        db.session.commit()
+    
+    msg = Message(conversation_id=conv.id, role="user", content=message_text)
+    db.session.add(msg)
+    db.session.commit()
+
+    run = Run(
+        conversation_id=conv.id,
+        user_message_id=msg.id,
+        status="running",
+        model=current_app.config["AGENT_MODEL"],
+    )
+    db.session.add(run)
+    db.session.commit()
+
+    # Step 0.5: Classify query to see if it needs knowledge base search
+    step1 = RunStep(
+        run_id=run.id,
+        seq=1,
+        kind="llm_call",
+        result={"status": "classifying"}
+    )
+    db.session.add(step1)
+    db.session.commit()
+
+    needs_kb = True
+    try:
+        classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
+        class_res = generate([{"role": "user", "content": classification_prompt}], tools=[])
+        class_content = (class_res.get("content") or "").strip().upper()
+        if "NO" in class_content and "YES" not in class_content:
+            needs_kb = False
+        step1.result = {"status": "classified", "needs_kb": needs_kb}
+        db.session.commit()
+    except Exception as e:
+        step1.result = {"error": str(e)}
+        db.session.commit()
+
+    # Step 1: Knowledge Search
+    kb_context = ""
+    no_policy_match = False
+    if needs_kb:
+        step2 = RunStep(
+            run_id=run.id,
+            seq=2,
+            kind="tool_call",
+            tool_name="search_knowledge",
+            arguments={"query": message_text},
+            result={"status": "searching"}
+        )
+        db.session.add(step2)
+        db.session.commit()
+        try:
+            kb_result = search_knowledge(message_text)
+            if kb_result and "error" not in str(kb_result):
+                kb_context = f"\n\nAUDITED_POLICY_KNOWLEDGE_RESULT:\n{json.dumps(kb_result)}"
+                if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
+                    no_policy_match = True
+            step2.result = kb_result
+            db.session.commit()
+        except Exception as e:
+            step2.result = {"error": str(e)}
+            db.session.commit()
+    else:
+        # If knowledge search was skipped because query is playful/off-topic, treat it as no policy match
+        no_policy_match = True
+
+    system_prompt = PIP_SYSTEM_PROMPT
+    if no_policy_match:
+        system_prompt += PIP_SYSTEM_PROMPT_NO_POLICY_MATCH
+
+    messages = [
+        {"role": "system", "content": system_prompt + tickets_context + kb_context},
+        {"role": "user", "content": message_text}
+    ]
+
+    if is_client_disconnected():
+        current_app.logger.info("Chat generation aborted: client disconnected.")
+        run.status = "stopped"
+        db.session.commit()
+        return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+
+    db.session.refresh(run)
+    if run.status == "stopped":
+        current_app.logger.info("Chat generation aborted: run status set to stopped.")
+        return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+
+    step3 = RunStep(
+        run_id=run.id,
+        seq=3,
+        kind="llm_call",
+        result={"status": "formulating"}
+    )
+    db.session.add(step3)
+    db.session.commit()
+
+    try:
+        res = generate(messages, tools=[])
+        
+        # Verify client is still connected before committing or returning
+        if is_client_disconnected():
+            current_app.logger.info("Chat generation aborted: client disconnected.")
+            run.status = "stopped"
+            db.session.commit()
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+            
+        db.session.refresh(run)
+        if run.status == "stopped":
+            current_app.logger.info("Chat generation aborted: run status set to stopped.")
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+
+        content = res.get("content") or "I'm ready to assist you. Which ticket or policy question shall we tackle next?"
+        
+        step3.result = {"content": content}
+        run.status = "completed"
+        db.session.commit()
+        
+        return jsonify({"reply": content, "run_id": run.id})
+    except Exception as e:
+        if is_client_disconnected():
+            run.status = "stopped"
+            db.session.commit()
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+            
+        db.session.refresh(run)
+        if run.status == "stopped":
+            current_app.logger.info("Chat generation aborted: run status set to stopped.")
+            return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
+            
+        # Log the exact failure for your own debugging and telemetry
+        current_app.logger.error(f"Chat LLM generation failed: {str(e)}")
+        
+        step3.result = {"error": str(e)}
+        run.status = "failed"
+        db.session.commit()
+
+        # Provide a graceful, honest failure message to the user
+        reply_text = (
+            "I'm sorry, but I am currently experiencing a connection issue and cannot process your request. "
+            "Please try asking again in a few moments, or reach out to the HR Helpdesk directly if this is urgent."
+        )
+        
+        # Return a 200 so the frontend chat UI doesn't crash, but displays the error text smoothly
+        return jsonify({"reply": reply_text, "run_id": run.id})
+

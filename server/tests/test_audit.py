@@ -133,12 +133,12 @@ def test_run_stats_aggregates(client, auth_headers, me):
               created_at=datetime(2026, 8, 1, 15, tzinfo=timezone.utc))
     _seed_run(me, status="failed", latency=16000, tokens=(300, 30),
               created_at=datetime(2026, 8, 2, 9, tzinfo=timezone.utc))
-    _seed_run(me, status="declined", latency=6000, tokens=(0, 0),
+    _seed_run(me, status="stopped", latency=6000, tokens=(0, 0),
               created_at=datetime(2026, 8, 2, 10, tzinfo=timezone.utc))
 
     stats = client.get("/api/runs/stats", headers=auth_headers).get_json()
     assert stats["total_runs"] == 4
-    assert stats["by_status"] == {"completed": 2, "failed": 1, "declined": 1}
+    assert stats["by_status"] == {"completed": 2, "failed": 1, "stopped": 1}
     assert stats["success_rate"] == pytest.approx(0.5)
     assert stats["avg_steps"] == pytest.approx(2.0)
     assert stats["avg_latency_ms"] == pytest.approx((1500 + 3000 + 16000 + 6000) / 4)
@@ -146,8 +146,8 @@ def test_run_stats_aggregates(client, auth_headers, me):
     assert stats["total_completion_tokens"] == 60
     assert stats["tool_usage"] == {"search_knowledge": 3, "escalate": 1}
     assert stats["runs_per_day"] == [
-        {"date": "2026-08-01", "completed": 2, "failed": 0, "declined": 0, "needs_confirmation": 0},
-        {"date": "2026-08-02", "completed": 0, "failed": 1, "declined": 1, "needs_confirmation": 0},
+        {"date": "2026-08-01", "completed": 2, "failed": 0, "stopped": 0, "running": 0},
+        {"date": "2026-08-02", "completed": 0, "failed": 1, "stopped": 1, "running": 0},
     ]
     assert stats["latency_buckets"] == [
         {"label": "<2s", "count": 1},
@@ -188,3 +188,14 @@ def test_get_run_non_admin_cannot_view_other_users_run(client, auth_headers, me)
 
     resp = client.get(f"/api/runs/{other_run.id}", headers=auth_headers)
     assert resp.status_code == 404
+
+
+def test_stop_run_endpoint(client, auth_headers, me):
+    run = _seed_run(me, status="running")
+    resp = client.post(f"/api/runs/{run.id}/stop", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "stopped"
+
+    # Verify run status is updated in the DB
+    db_run = db.session.get(Run, run.id)
+    assert db_run.status == "stopped"
