@@ -30,6 +30,7 @@ export interface Ticket {
   draft_reply?: string | null;
   draft_confidence?: number;
   escalation_reason?: string | null;
+  resolution_notes?: string | null;
   replies?: { id: string; sender: string; text: string; timestamp: string }[];
   created_at: string;
   updated_at?: string;

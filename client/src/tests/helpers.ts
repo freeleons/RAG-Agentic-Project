@@ -1,5 +1,9 @@
 import { vi } from "vitest";
 
+if (typeof window !== "undefined") {
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+}
+
 export function jsonResponse(body: unknown, status = 200): Response {
   return {
     ok: status < 400,

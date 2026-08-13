@@ -2,7 +2,6 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "../App";
-import { AuthProvider } from "../auth/AuthContext";
 import { jsonResponse, stubFetch } from "./helpers";
 
 afterEach(() => {
@@ -10,48 +9,31 @@ afterEach(() => {
   localStorage.clear();
 });
 
+const TICKETS = [
+  { id: 1, requester_name: "Dave", requester_email: "dave@test.com", title: "VPN ticket", description: "VPN issue", status: "open", priority: "medium", category: "IT Support", ticket_number: "T-101", sla_minutes_remaining: 30, created_at: "2026-08-03T00:00:00" },
+  { id: 2, requester_name: "Bob", requester_email: "bob@test.com", title: "Refund question", description: "Refund issue", status: "open", priority: "medium", category: "HR & Benefits", ticket_number: "T-102", sla_minutes_remaining: 45, created_at: "2026-08-03T00:00:00" }
+];
+
 function renderAuthed() {
-  localStorage.setItem("agent_token", "jwt-123");
-  localStorage.setItem("agent_email", "me@test.com");
-  return render(
-    <AuthProvider>
-      <App />
-    </AuthProvider>
-  );
+  localStorage.setItem("apexcare_token", "jwt-123");
+  stubFetch({
+    "GET /api/auth/me": () => jsonResponse({ id: 1, email: "me@test.com", full_name: "Alexandra Vance", department: "HR Operations", role_title: "Lead Support Specialist" }),
+    "GET /api/tickets": () => jsonResponse(TICKETS),
+  });
+  return render(<App />);
 }
 
-test("lists the user's conversations", async () => {
-  stubFetch({
-    "GET /api/conversations": () =>
-      jsonResponse([
-        { id: 1, title: "VPN ticket", created_at: "2026-08-03T00:00:00" },
-        { id: 2, title: "Refund question", created_at: "2026-08-03T00:00:00" },
-      ]),
-  });
+test("lists the user's tickets", async () => {
   renderAuthed();
-  expect(await screen.findByText("VPN ticket")).toBeInTheDocument();
+  expect((await screen.findAllByText("VPN ticket")).length).toBeGreaterThan(0);
   expect(screen.getByText("Refund question")).toBeInTheDocument();
 });
 
-test("new conversation creates and selects it", async () => {
-  stubFetch({
-    "GET /api/conversations": () => jsonResponse([]),
-    "POST /api/conversations": () => jsonResponse({ id: 5, title: "New conversation" }, 201),
-    "GET /api/conversations/5/messages": () => jsonResponse({ messages: [], runs: [] }),
-  });
-  renderAuthed();
-  await userEvent.click(
-    await screen.findByRole("button", { name: /new conversation/i })
-  );
-  expect(
-    await screen.findByPlaceholderText(/give the agent a goal/i)
-  ).toBeInTheDocument();
-});
+
 
 test("logout returns to the auth screen", async () => {
-  stubFetch({ "GET /api/conversations": () => jsonResponse([]) });
   renderAuthed();
   await userEvent.click(await screen.findByRole("button", { name: /logout/i }));
-  expect(await screen.findByRole("tab", { name: /log in/i })).toBeInTheDocument();
-  expect(localStorage.getItem("agent_token")).toBeNull();
+  expect(await screen.findByRole("tab", { name: /register profile/i })).toBeInTheDocument();
+  expect(localStorage.getItem("apexcare_token")).toBeNull();
 });

@@ -118,15 +118,11 @@ export async function fetchTickets(params?: {
   if (params?.category) query.set("category", params.category);
   if (params?.q) query.set("q", params.q);
 
-  return apiFetch<Ticket[]>(`/api/tickets?${query.toString()}`);
+  const qs = query.toString();
+  return apiFetch<Ticket[]>(`/api/tickets${qs ? `?${qs}` : ""}`);
 }
 
-export async function createTicket(ticketData: Partial<Ticket>): Promise<Ticket> {
-  return apiFetch<Ticket>("/api/tickets", {
-    method: "POST",
-    body: JSON.stringify(ticketData),
-  });
-}
+
 
 export async function updateTicket(ticketId: number, updates: Partial<Ticket>): Promise<Ticket> {
   return apiFetch<Ticket>(`/api/tickets/${ticketId}`, {
@@ -236,13 +232,7 @@ export const api = {
     const qs = params.toString();
     return apiFetch<Ticket[]>(qs ? `/api/tickets?${qs}` : "/api/tickets");
   },
-  createTicket: (data: { title: string; description: string; priority?: string; category?: string }) =>
-    createTicket(data),
   updateTicket: (ticketId: number, data: Partial<Ticket>) =>
     updateTicket(ticketId, data),
-  deleteTicket: (ticketId: number) =>
-    apiFetch<{ success: boolean }>(`/api/tickets/${ticketId}`, {
-      method: "DELETE",
-    }),
 };
 

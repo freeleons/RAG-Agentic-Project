@@ -91,9 +91,7 @@ def generate(messages, tools, max_retries=3, timeout=120):
                     if tool_name in [
                         "search_knowledge",
                         "list_tickets",
-                        "create_ticket",
                         "update_ticket",
-                        "delete_ticket",
                         "create_draft",
                         "escalate",
                     ]:

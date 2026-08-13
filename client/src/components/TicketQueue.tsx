@@ -5,7 +5,6 @@ interface TicketQueueProps {
   tickets: Ticket[];
   selectedTicket: Ticket | null;
   onSelectTicket: (ticket: Ticket) => void;
-  onCreateNewTicket: () => void;
   isLoading: boolean;
   triagingTickets?: Record<
     number,
@@ -17,7 +16,6 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
   tickets,
   selectedTicket,
   onSelectTicket,
-  onCreateNewTicket,
   isLoading,
   triagingTickets,
 }) => {
