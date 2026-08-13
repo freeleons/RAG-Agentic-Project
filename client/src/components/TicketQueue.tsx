@@ -5,7 +5,6 @@ interface TicketQueueProps {
   tickets: Ticket[];
   selectedTicket: Ticket | null;
   onSelectTicket: (ticket: Ticket) => void;
-  onCreateNewTicket: () => void;
   isLoading: boolean;
   triagingTickets?: Record<
     number,
@@ -17,7 +16,6 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
   tickets,
   selectedTicket,
   onSelectTicket,
-  onCreateNewTicket,
   isLoading,
   triagingTickets,
 }) => {
@@ -63,12 +61,6 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
               {filteredTickets.length}
             </span>
           </div>
-          <button
-            onClick={onCreateNewTicket}
-            className="px-2 py-1 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-850 text-blue-700 dark:text-blue-400 rounded-lg text-[10px] font-bold cursor-pointer transition border border-blue-200 dark:border-blue-800"
-          >
-            + Create Ticket
-          </button>
         </div>
 
         {/* Search Bar */}
