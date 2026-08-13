@@ -1,12 +1,35 @@
+URGENCY_SYSTEM_PROMPT = (
+    "You are an AI assistant helping ApexCare Support prioritize employee tickets.\n"
+    "Set priority from urgency and importance only. Reply with a single JSON object, no markdown."
+)
+
+URGENCY_USER_PROMPT = (
+    "Analyze this support ticket and set its priority.\n\n"
+    "Requester: {requester_name} ({requester_department})\n"
+    "Category: {category}\n"
+    "Subject: {title}\n"
+    "Issue Description: {description}\n\n"
+    "Priority levels (pick exactly one):\n"
+    "- urgent: safety, security breach, widespread outage, legal deadline today, or blocked payroll/benefits "
+    "with immediate harm\n"
+    "- high: time-sensitive request, approaching deadline (within a few days), service outage for one person, "
+    "or explicit escalation language\n"
+    "- medium: normal actionable request that needs a response but is not time-critical\n"
+    "- low: FYI, general inquiry, nice-to-have, or no clear deadline\n\n"
+    "Skip inventing facts. Use only the ticket text.\n\n"
+    "Return JSON only:\n"
+    '{{"priority": "high", "reason": "one short sentence"}}\n'
+)
+
 TRIAGE_USER_PROMPT = (
     "Employee Support Ticket [{ticket_number}]\n"
     "Requester: {requester_name} ({requester_department}, {requester_email})\n"
-    "Category: {category} | Channel: {channel}\n"
+    "Category: {category} | Priority: {priority} | Channel: {channel}\n"
     "Subject: {title}\n"
     "Issue Description: {description}\n\n"
     "Please execute search_knowledge to find relevant ApexCare policy documents. "
     "Then generate a draft reply using create_draft with ticket_id={ticket_id}. "
-    "If no relevant policy exists or if this is an urgent hardware outage, call escalate."
+    "If no relevant policy exists or if priority is urgent/high with an outage or safety issue, call escalate."
 )
 
 PIP_CLASSIFICATION_PROMPT = (
