@@ -1,7 +1,7 @@
 """add resolution_notes and kb_synced_at to tickets
 
 Revision ID: 9a1f3c7d2e5b
-Revises: 70fc5bbaa77f
+Revises: f187970f2b6d
 Create Date: 2026-08-13 00:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '9a1f3c7d2e5b'
-down_revision = '70fc5bbaa77f'
+down_revision = 'f187970f2b6d'
 branch_labels = None
 depends_on = None
 

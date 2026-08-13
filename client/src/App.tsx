@@ -302,6 +302,16 @@ export default function App() {
     }
   };
 
+  const handleUpdateResolutionNotes = async (ticketId: number, notes: string) => {
+    try {
+      const updated = await updateTicket(ticketId, { resolution_notes: notes });
+      setTickets((prev) => prev.map((t) => (t.id === ticketId ? updated : t)));
+      if (selectedTicket?.id === ticketId) setSelectedTicket(updated);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleSendReply = async (ticketId: number, replyText: string) => {
     try {
       const newReplyObj = {
@@ -398,6 +408,7 @@ export default function App() {
               onStopTriage={handleStopTriage}
               onUpdateTicketStatus={handleUpdateTicketStatus}
               onSendReply={handleSendReply}
+              onUpdateResolutionNotes={handleUpdateResolutionNotes}
               triagingTickets={triagingTickets}
             />
           </div>

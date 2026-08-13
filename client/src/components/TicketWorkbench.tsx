@@ -7,6 +7,7 @@ interface TicketWorkbenchProps {
   onStopTriage: (ticketId: number) => void;
   onUpdateTicketStatus: (ticketId: number, status: Ticket["status"]) => void;
   onSendReply: (ticketId: number, replyText: string) => void;
+  onUpdateResolutionNotes: (ticketId: number, notes: string) => void;
   triagingTickets: Record<number, { isProcessing: boolean; runId?: number; statusText?: string }>;
 }
 
@@ -16,6 +17,7 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   onStopTriage,
   onUpdateTicketStatus,
   onSendReply,
+  onUpdateResolutionNotes,
   triagingTickets,
 }) => {
   const [replyInput, setReplyInput] = useState("");
@@ -23,6 +25,15 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   const [ticketDrafts, setTicketDrafts] = useState<Record<number, string>>({});
   const lastSeenDrafts = useRef<Record<number, string | null | undefined>>({});
   const ticketChatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const [isEditingResolution, setIsEditingResolution] = useState(false);
+  const [tempResolutionNotes, setTempResolutionNotes] = useState("");
+
+  // Sync state for resolution notes when ticket ID changes
+  useEffect(() => {
+    setIsEditingResolution(false);
+    setTempResolutionNotes(ticket?.resolution_notes || "");
+  }, [ticket?.id]);
 
   const currentTriage = ticket ? triagingTickets[ticket.id] : null;
   const isTicketTriaging = Boolean(currentTriage?.isProcessing);
@@ -90,6 +101,13 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
       </div>
     );
   }
+
+  const handleSaveResolutionNotes = () => {
+    if (ticket) {
+      onUpdateResolutionNotes(ticket.id, tempResolutionNotes);
+      setIsEditingResolution(false);
+    }
+  };
 
   const handleManualSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,6 +234,54 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
               <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-300 text-xs font-medium space-y-1">
                 <span className="font-bold block text-rose-700 dark:text-rose-400">🚨 Tier-2 Escalation</span>
                 <p>{ticket.escalation_reason}</p>
+              </div>
+            )}
+
+            {/* 4. Resolution Notes Card */}
+            {ticket.status === "resolved" && (
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs font-medium space-y-2">
+                <span className="font-bold block text-emerald-700 dark:text-emerald-400">✅ Ticket Resolution Notes</span>
+                {isEditingResolution ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={tempResolutionNotes}
+                      onChange={(e) => setTempResolutionNotes(e.target.value)}
+                      placeholder="Enter how this ticket was resolved..."
+                      className="w-full p-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none text-slate-900 dark:text-white"
+                      rows={3}
+                    />
+                    <div className="flex space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveResolutionNotes}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold cursor-pointer"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingResolution(false)}
+                        className="px-3 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 rounded-lg text-[10px] font-bold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-between items-start">
+                    <p className="italic">{ticket.resolution_notes || "No resolution notes entered yet."}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTempResolutionNotes(ticket.resolution_notes || "");
+                        setIsEditingResolution(true);
+                      }}
+                      className="ml-2 px-2 py-0.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-700 dark:text-emerald-300 rounded-md text-[10px] font-bold cursor-pointer shrink-0"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             {/* Auto-scroll target */}

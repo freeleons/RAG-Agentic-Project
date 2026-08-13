@@ -389,6 +389,7 @@ def _serialize_ticket(t):
         "draft_reply": getattr(t, "draft_reply", None),
         "draft_confidence": getattr(t, "draft_confidence", 95),
         "escalation_reason": getattr(t, "escalation_reason", None),
+        "resolution_notes": getattr(t, "resolution_notes", None),
         "replies": replies,
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
@@ -478,6 +479,8 @@ def update_ticket_endpoint(ticket_id):
         ticket.draft_reply = data["draft_reply"]
     if "escalation_reason" in data:
         ticket.escalation_reason = data["escalation_reason"]
+    if "resolution_notes" in data:
+        ticket.resolution_notes = data["resolution_notes"]
     if "new_reply" in data and data["new_reply"]:
         existing = []
         if ticket.replies_json:

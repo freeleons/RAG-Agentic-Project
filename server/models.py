@@ -96,6 +96,8 @@ class Ticket(db.Model):
     draft_confidence = db.Column(db.Integer, default=95)
     escalation_reason = db.Column(db.Text, nullable=True)
     replies_json = db.Column(db.Text, nullable=True)
+    resolution_notes = db.Column(db.Text)
+    kb_synced_at = db.Column(db.DateTime(timezone=True))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
