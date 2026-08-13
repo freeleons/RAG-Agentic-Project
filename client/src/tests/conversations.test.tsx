@@ -29,22 +29,7 @@ test("lists the user's tickets", async () => {
   expect(screen.getByText("Refund question")).toBeInTheDocument();
 });
 
-test("new ticket creates and displays it", async () => {
-  stubFetch({
-    "GET /api/auth/me": () => jsonResponse({ id: 1, email: "me@test.com", full_name: "Alexandra Vance", department: "HR Operations", role_title: "Lead Support Specialist" }),
-    "GET /api/tickets": () => jsonResponse([]),
-    "POST /api/tickets": () => jsonResponse({ id: 5, requester_name: "Self", requester_email: "me@test.com", title: "New ticket", description: "Fresh issue", status: "open", priority: "medium", category: "IT Support", ticket_number: "T-105", sla_minutes_remaining: 60, created_at: "2026-08-03T00:00:00" }, 201),
-  });
-  localStorage.setItem("apexcare_token", "jwt-123");
-  render(<App />);
-  await userEvent.click(
-    await screen.findByRole("button", { name: /\+ Create Ticket/i })
-  );
-  await userEvent.type(screen.getByPlaceholderText(/FSA rollover/i), "New ticket");
-  await userEvent.type(screen.getByPlaceholderText(/Detail the employee/i), "Fresh issue");
-  await userEvent.click(screen.getByRole("button", { name: /^Create Ticket$/i }));
-  expect((await screen.findAllByText("New ticket")).length).toBeGreaterThan(0);
-});
+
 
 test("logout returns to the auth screen", async () => {
   renderAuthed();

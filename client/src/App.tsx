@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import {
-  createTicket,
   fetchRunDetails,
   fetchTickets,
   getCurrentUser,
@@ -56,7 +55,6 @@ export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [isLoadingTickets, setIsLoadingTickets] = useState<boolean>(false);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
-  const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [auditResetKey, setAuditResetKey] = useState<number>(0);
 
@@ -109,11 +107,7 @@ export default function App() {
   }, [triagingTickets]);
 
 
-  // New ticket form state
-  const [newTitle, setNewTitle] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [newCategory, setNewCategory] = useState<Ticket["category"]>("HR & Benefits");
-  const [newPriority, setNewPriority] = useState<Ticket["priority"]>("medium");
+
 
   // Load user session
   useEffect(() => {
@@ -336,28 +330,7 @@ export default function App() {
 
 
 
-  const handleCreateTicketSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim() || !newDesc.trim()) return;
-    try {
-      const created = await createTicket({
-        title: newTitle,
-        description: newDesc,
-        category: newCategory,
-        priority: newPriority,
-        requester_name: "Self / Internal Agent",
-        requester_email: user?.email || "specialist@apexcare.tech",
-        requester_department: user?.department || "HR Operations",
-      });
-      setTickets((prev) => [created, ...prev]);
-      setSelectedTicket(created);
-      setShowNewTicketModal(false);
-      setNewTitle("");
-      setNewDesc("");
-    } catch (err: any) {
-      alert(err.message || "Failed to create ticket");
-    }
-  };
+
 
   if (!token || !user) {
     return <AuthPage onLoginSuccess={handleLoginSuccess} />;
@@ -393,7 +366,6 @@ export default function App() {
               tickets={tickets}
               selectedTicket={selectedTicket}
               onSelectTicket={(t) => setSelectedTicket(t)}
-              onCreateNewTicket={() => setShowNewTicketModal(true)}
               isLoading={isLoadingTickets}
               triagingTickets={triagingTickets}
             />
@@ -429,94 +401,7 @@ export default function App() {
 
 
 
-      {/* New Ticket Modal */}
-      {showNewTicketModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 dark:bg-slate-950/80 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-lg p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <h3 className="font-bold text-base text-slate-900 dark:text-white">+ Create Support Ticket</h3>
-              <button
-                onClick={() => setShowNewTicketModal(false)}
-                className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-bold text-sm cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
 
-            <form onSubmit={handleCreateTicketSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Ticket Title / Subject</label>
-                <input
-                  type="text"
-                  required
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="e.g. FSA rollover inquiry for 2026 plan year"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Issue Description</label>
-                <textarea
-                  rows={4}
-                  required
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="Detail the employee's issue or policy question..."
-                  className="w-full p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Category</label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as any)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                  >
-                    <option value="HR & Benefits">HR & Benefits</option>
-                    <option value="IT Support">IT Support</option>
-                    <option value="Billing & Expenses">Billing & Expenses</option>
-                    <option value="General">General</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Priority</label>
-                  <select
-                    value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value as any)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShowNewTicketModal(false)}
-                  className="px-4 py-2 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-sm"
-                >
-                  Create Ticket
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Onboarding Tutorial Modal */}
       {showOnboarding && user && (
