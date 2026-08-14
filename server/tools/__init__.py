@@ -1,3 +1,4 @@
+from server.hitl import requires_hitl
 from server.tools import search_knowledge as _search_knowledge_module
 from server.tools import create_draft as _create_draft_module
 from server.tools import escalate as _escalate_module
@@ -97,6 +98,9 @@ TOOLS = {
     },
 }
 
+# Keep registry flags aligned with TOOL_TIERS in server/hitl.py
+for _name, _tool in TOOLS.items():
+    _tool["requires_confirmation"] = requires_hitl(_name)
 
 
 def openai_tool_defs():

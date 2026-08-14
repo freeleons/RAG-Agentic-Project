@@ -3,10 +3,11 @@ import json
 from flask import current_app
 from sqlalchemy import func
 
+from server.hitl import execute_tool, execute_tool_with_hitl, requires_hitl
 from server.llm import generate
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
-from server.tools import TOOLS, openai_tool_defs, validate_arguments
+from server.tools import openai_tool_defs, validate_arguments
 from server.utils import is_client_disconnected
 
 SYSTEM_PROMPT = (
@@ -156,28 +157,24 @@ def _loop(run, messages, retried):
             continue
         retried = False
 
-        tool = TOOLS[name]
-        # Pause consequential tools (create_draft / escalate) for Approve/Reject
-        if tool["requires_confirmation"]:
-            action = PendingAction(run_id=run.id, tool_name=name, arguments=arguments)
-            run.status = "needs_confirmation"
-            db.session.add(action)
-            db.session.commit()
+        # Cap check before tool execution / HITL pause
+        if _next_seq(run) > max_steps:
+            return _finish(run, "failed", "I ran out of steps before finishing this task.")
+
+        # Tool-execution HITL wrapper: tier 2+ pauses for Approve/Reject; tier 1 runs below
+        if requires_hitl(name):
+            outcome = execute_tool_with_hitl(name, arguments, run=run)
             return {
                 "run_id": run.id,
                 "status": "needs_confirmation",
-                "pending_action": {"id": action.id, "tool": name, "arguments": arguments},
+                "pending_action": outcome.pending_action,
             }
-
-        # Cap check before tool_call to prevent exceeding MAX_AGENT_STEPS
-        if _next_seq(run) > max_steps:
-            return _finish(run, "failed", "I ran out of steps before finishing this task.")
 
         result = record_step(
             run.id,
             _next_seq(run),
             "tool_call",
-            lambda t=tool, a=arguments: t["handler"](**a),
+            lambda n=name, a=arguments: execute_tool(n, a),
             tool_name=name,
             arguments=arguments,
         )
@@ -204,12 +201,12 @@ def resume_run(run, approved):
     db.session.commit()
 
     if approved:
-        tool = TOOLS[action.tool_name]
+        # Already approved — execute without re-entering the HITL gate
         result = record_step(
             run.id,
             _next_seq(run),
             "tool_call",
-            lambda t=tool, a=action.arguments: t["handler"](**a),
+            lambda a=action.arguments, n=action.tool_name: execute_tool(n, a),
             tool_name=action.tool_name,
             arguments=action.arguments,
         )
