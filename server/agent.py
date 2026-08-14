@@ -7,6 +7,7 @@ from server.llm import generate
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
 from server.tools import TOOLS, openai_tool_defs, validate_arguments
+from server.loop_guard import LoopGuard
 from server.utils import is_client_disconnected
 
 SYSTEM_PROMPT = (
@@ -97,6 +98,8 @@ def run_agent(run, goal):
 
 def _loop(run, messages, retried):
     max_steps = current_app.config["MAX_AGENT_STEPS"]
+    # Fresh guard per loop: fingerprints do not carry across runs/resumes unless we reuse this instance
+    loop_guard = LoopGuard(repeat_threshold=3)
     while True:
         if is_client_disconnected():
             current_app.logger.info(f"Run #{run.id} execution aborted by client disconnect.")
@@ -157,6 +160,35 @@ def _loop(run, messages, retried):
         retried = False
 
         tool = TOOLS[name]
+
+        # Loop fingerprinting: same tool + same args too many times → skip execute, nudge model
+        # Complements README bounded-loop guards (MAX_AGENT_STEPS) by stopping repeated identical calls earlier
+        if loop_guard.check(name, arguments):
+            # Still respect the hard step cap before recording the blocked observation
+            if _next_seq(run) > max_steps:
+                return _finish(run, "failed", "I ran out of steps before finishing this task.")
+            blocked = {
+                "success": False,
+                "error": (
+                    "You've called this tool with these exact arguments multiple times. "
+                    "The result will be the same. Try a different approach."
+                ),
+            }
+            # Record a tool_call step for auditability without invoking the real handler
+            record_step(
+                run.id,
+                _next_seq(run),
+                "tool_call",
+                lambda: blocked,
+                tool_name=name,
+                arguments=arguments,
+            )
+            messages = messages + [
+                _assistant_tool_call_message(call_id, name, arguments),
+                _tool_result_message(call_id, name, blocked),
+            ]
+            continue
+
         if tool["requires_confirmation"]:
             action = PendingAction(run_id=run.id, tool_name=name, arguments=arguments)
             run.status = "needs_confirmation"
