@@ -56,9 +56,10 @@ TOOLS = {
     },
 
 
+    # Consequential action: require HITL confirmation before running
     "create_draft": {
         "handler": _create_draft_module.create_draft,
-        "requires_confirmation": False,
+        "requires_confirmation": True,
         "description": (
             "Draft and send a reply to a support ticket. Requires user confirmation "
             "before it is sent."
@@ -72,9 +73,10 @@ TOOLS = {
             "required": ["ticket_id", "reply_text"],
         },
     },
+    # Consequential action: require HITL confirmation before running
     "escalate": {
         "handler": _escalate_module.escalate,
-        "requires_confirmation": False,
+        "requires_confirmation": True,
         "description": (
             "Escalate a support ticket to a human queue by priority. Requires user "
             "confirmation."

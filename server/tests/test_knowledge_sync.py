@@ -117,3 +117,35 @@ def test_sync_respects_limit(app, monkeypatch):
         )
         result = sync_resolved_tickets(limit=1)
         assert result == {"synced": 1, "failed": 0, "total": 1}
+
+
+def test_patch_resolved_triggers_auto_sync(client, auth_headers, monkeypatch):
+    """PATCH to resolved should auto-sync the ticket into the knowledge base."""
+    from server.models import Ticket, User, db
+
+    user = User.query.filter_by(email="me@test.com").first()
+    ticket = Ticket(
+        user_id=user.id,
+        title="VPN fixed",
+        description="Token reset worked",
+        status="open",
+    )
+    db.session.add(ticket)
+    db.session.commit()
+    ticket_id = ticket.id
+
+    called = {}
+
+    def fake_sync(t):
+        called["id"] = t.id
+        return {"synced": True, "skipped": False, "error": None}
+
+    monkeypatch.setattr("server.routes.sync_one_resolved_ticket", fake_sync)
+
+    res = client.patch(
+        f"/api/tickets/{ticket_id}",
+        headers=auth_headers,
+        json={"status": "resolved", "resolution_notes": "Reset VPN token."},
+    )
+    assert res.status_code == 200
+    assert called["id"] == ticket_id

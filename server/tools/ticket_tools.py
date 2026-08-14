@@ -105,6 +105,12 @@ def update_ticket(ticket_id, status=None, priority=None, title=None, description
         ticket.resolution_notes = resolution_notes.strip()
 
     db.session.commit()
+
+    # When marked resolved, auto-embed into the KB (failures are non-blocking)
+    if ticket.status == "resolved":
+        from server.knowledge_sync import sync_one_resolved_ticket
+        sync_one_resolved_ticket(ticket)
+
     return {
         "success": True,
         "message": f"Ticket #{ticket.id} updated successfully.",

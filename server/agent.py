@@ -157,6 +157,7 @@ def _loop(run, messages, retried):
         retried = False
 
         tool = TOOLS[name]
+        # Pause consequential tools (create_draft / escalate) for Approve/Reject
         if tool["requires_confirmation"]:
             action = PendingAction(run_id=run.id, tool_name=name, arguments=arguments)
             run.status = "needs_confirmation"

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Ticket } from "../types";
+import { AgentRun, Ticket } from "../types";
 
 interface TicketWorkbenchProps {
   ticket: Ticket | null;
@@ -9,6 +9,10 @@ interface TicketWorkbenchProps {
   onSendReply: (ticketId: number, replyText: string) => void;
   onUpdateResolutionNotes: (ticketId: number, notes: string) => void;
   triagingTickets: Record<number, { isProcessing: boolean; runId?: number; statusText?: string }>;
+  /** Latest triage run; includes pending_action when HITL confirmation is required */
+  latestRun?: AgentRun | null;
+  /** Approve or reject a consequential tool (create_draft / escalate) */
+  onConfirmPending?: (approved: boolean) => void;
 }
 
 export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
@@ -19,6 +23,8 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   onSendReply,
   onUpdateResolutionNotes,
   triagingTickets,
+  latestRun = null,
+  onConfirmPending,
 }) => {
   const [replyInput, setReplyInput] = useState("");
   // Persistent reply state memory map indexed by ticket ID
@@ -288,6 +294,34 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
             <div ref={ticketChatEndRef} />
           </div>
         </div>
+
+        {/* HITL: consequential tool awaiting staff approval */}
+        {latestRun?.status === "needs_confirmation" && latestRun.pending_action && onConfirmPending && (
+          <div className="w-full p-3 rounded-2xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 space-y-2">
+            <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+              Pending action: {latestRun.pending_action.tool}
+            </p>
+            <p className="text-[11px] text-amber-900/80 dark:text-amber-200/80 font-mono whitespace-pre-wrap break-words">
+              {JSON.stringify(latestRun.pending_action.arguments, null, 2)}
+            </p>
+            <div className="flex space-x-2">
+              <button
+                type="button"
+                onClick={() => onConfirmPending(true)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                onClick={() => onConfirmPending(false)}
+                className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-100 text-xs font-bold cursor-pointer"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Bottom Phone Chat Reply Box & Sleek Action Bar */}
         <div className="w-full pt-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 rounded-2xl shadow-md space-y-3 flex flex-col">
