@@ -11,6 +11,7 @@ from server.models import Conversation, Message, PendingAction, Run, RunStep, Ti
 from server.observability import record_step
 from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
+from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.utils import is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
@@ -496,6 +497,11 @@ def update_ticket_endpoint(ticket_id):
     return jsonify(_serialize_ticket(ticket))
 
 
+def _next_run_seq(run_id):
+    count = db.session.query(func.count(RunStep.id)).filter_by(run_id=run_id).scalar()
+    return count + 1
+
+
 @api_bp.post("/tickets/<int:ticket_id>/triage")
 @require_auth
 def triage_ticket_endpoint(ticket_id):
@@ -511,24 +517,39 @@ def triage_ticket_endpoint(ticket_id):
     db.session.add(conv)
     db.session.commit()
 
+    # Placeholder message — content rewritten after urgency classification
+    msg = Message(conversation_id=conv.id, role="user", content=f"Triage ticket {ticket.ticket_number}")
+    db.session.add(msg)
+    db.session.commit()
+
+    run = Run(conversation_id=conv.id, user_message_id=msg.id, status="running")
+    db.session.add(run)
+    db.session.commit()
+
+    # Step 1: classify urgency / priority from ticket text (inbox-style priority logic)
+    urgency_messages = build_urgency_messages(ticket)
+    classification = record_step(
+        run.id,
+        _next_run_seq(run.id),
+        "llm_call",
+        lambda: classify_priority(ticket),
+        llm_messages=urgency_messages,
+    )
+    apply_priority(ticket, classification)
+
     user_prompt = TRIAGE_USER_PROMPT.format(
         ticket_number=ticket.ticket_number,
         requester_name=ticket.requester_name,
         requester_department=ticket.requester_department,
         requester_email=ticket.requester_email,
         category=ticket.category,
+        priority=ticket.priority,
         channel=ticket.channel,
         title=ticket.title,
         description=ticket.description,
         ticket_id=ticket.id,
     )
-
-    msg = Message(conversation_id=conv.id, role="user", content=user_prompt)
-    db.session.add(msg)
-    db.session.commit()
-
-    run = Run(conversation_id=conv.id, user_message_id=msg.id, status="running")
-    db.session.add(run)
+    msg.content = user_prompt
     db.session.commit()
 
     try:
@@ -563,7 +584,7 @@ def triage_ticket_endpoint(ticket_id):
 
         record_step(
             run.id,
-            1,
+            _next_run_seq(run.id),
             "tool_call",
             lambda: create_draft(ticket.id, draft_text),
             tool_name="create_draft",

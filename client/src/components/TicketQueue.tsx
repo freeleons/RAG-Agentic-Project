@@ -121,6 +121,17 @@ export const TicketQueue: React.FC<TicketQueueProps> = ({
                         <span>🤖 Triaging...</span>
                       </span>
                     )}
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase ${
+                      ticket.priority === "urgent"
+                        ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                        : ticket.priority === "high"
+                        ? "bg-orange-500/10 text-orange-700 dark:text-orange-400"
+                        : ticket.priority === "low"
+                        ? "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                        : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                    }`}>
+                      {ticket.priority}
+                    </span>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getStatusBadgeClass(ticket.status)}`}>
                       {ticket.status.replace("_", " ").toUpperCase()}
                     </span>

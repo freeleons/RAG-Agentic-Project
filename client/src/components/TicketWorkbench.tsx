@@ -140,6 +140,17 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
               <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20">
                 {ticket.category}
               </span>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-bold border uppercase tracking-wide ${
+                ticket.priority === "urgent"
+                  ? "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20"
+                  : ticket.priority === "high"
+                  ? "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20"
+                  : ticket.priority === "low"
+                  ? "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20"
+                  : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+              }`}>
+                {ticket.priority}
+              </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
               {ticket.requester_department} • {ticket.requester_email}
