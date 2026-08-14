@@ -1,3 +1,19 @@
+"""All prompt templates in one place, so wording can be tuned without touching
+logic code. (The main agent SYSTEM_PROMPT lives in agent.py next to the loop.)
+
+Who uses what:
+  URGENCY_*                        -> urgency.py (ticket priority classification)
+  TRIAGE_USER_PROMPT               -> routes.triage_ticket_endpoint (the goal
+                                      handed to the agent loop for a ticket)
+  PIP_CLASSIFICATION_PROMPT        -> routes.pip_chat step 0.5 (does this chat
+                                      message need a knowledge-base search?)
+  PIP_SYSTEM_PROMPT (+ suffix)     -> routes.pip_chat (the tool-less chat widget)
+
+Templates are .format()-ed, so literal braces in output examples must be
+doubled ({{ }}).
+"""
+
+# System half of the priority classifier: forces bare-JSON output.
 URGENCY_SYSTEM_PROMPT = (
     "You are an AI assistant helping ApexCare Support prioritize employee tickets.\n"
     "Set priority from urgency and importance only. Reply with a single JSON object, no markdown."
@@ -21,6 +37,9 @@ URGENCY_USER_PROMPT = (
     '{{"priority": "high", "reason": "one short sentence"}}\n'
 )
 
+# The "goal" message given to the agent loop when the user clicks Triage on a
+# ticket: all ticket fields inlined, plus explicit marching orders matching the
+# workflow in agent.SYSTEM_PROMPT (search -> draft, or escalate).
 TRIAGE_USER_PROMPT = (
     "Employee Support Ticket [{ticket_number}]\n"
     "Requester: {requester_name} ({requester_department}, {requester_email})\n"
@@ -32,6 +51,8 @@ TRIAGE_USER_PROMPT = (
     "If no relevant policy exists or if priority is urgent/high with an outage or safety issue, call escalate."
 )
 
+# Cheap YES/NO router run before chat replies: skips the (slow) RAG search
+# when the message is small talk. Parsed by substring check in routes.pip_chat.
 PIP_CLASSIFICATION_PROMPT = (
     "You are a routing assistant. Your task is to decide if the user's query requires searching the company knowledge base (for company policies, HR/IT guidelines, benefits, or employee support ticket details).\n\n"
     "User Query: \"{message_text}\"\n\n"
@@ -40,6 +61,11 @@ PIP_CLASSIFICATION_PROMPT = (
     "Response (answer with exactly 'YES' or 'NO' and nothing else):"
 )
 
+# Persona for the conversational chat widget (/api/chat). Unlike the triage
+# agent, this path has NO tool execution — rule 5 exists because small models
+# otherwise imitate the tool-call JSON they saw in training.
+# routes.pip_chat appends CURRENT_ACTIVE_TICKETS and (optionally) the
+# knowledge-search result to this prompt at request time.
 PIP_SYSTEM_PROMPT = (
     "You are Pip, the friendly, highly intelligent, happy, helpful, professional, and fun AI Support Assistant for ApexCare Technologies.\n\n"
     "YOUR CORE PERSONALITY & TONE RULES:\n"
@@ -61,6 +87,8 @@ PIP_SYSTEM_PROMPT = (
     "   - Always maintain a warm, helpful, happy, and professional tone, and steer the user back to support tasks at the end."
 )
 
+# Appended to PIP_SYSTEM_PROMPT when search_knowledge returned NO_POLICY_MATCH
+# (or the search was skipped): admit the gap, never invent policy.
 PIP_SYSTEM_PROMPT_NO_POLICY_MATCH = (
     "\n\n[SYSTEM STATUS: NO_POLICY_MATCH]\n"
     "The knowledge base search found no matching policy. "
