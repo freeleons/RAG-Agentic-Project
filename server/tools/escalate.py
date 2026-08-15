@@ -1,9 +1,14 @@
-"""Tool: escalate a support ticket to a human queue."""
+"""Tool: escalate — hand a ticket off to a human support queue.
+
+Persists status/priority/reason onto the Ticket row when possible. The
+RunStep row written by record_step() is still the durable audit trail.
+"""
 
 import itertools
 
 from flask import current_app
 
+# Mints esc-1, esc-2, ... per server process; resets on restart.
 _counter = itertools.count(1)
 
 

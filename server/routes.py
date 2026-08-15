@@ -1,3 +1,27 @@
+"""All non-auth HTTP endpoints, mounted under /api (see app.py).
+
+Roadmap of this file:
+
+  Audit / observability UI
+    GET  /runs/stats            aggregate stats + chart data for the Audit tab
+    GET  /runs                  paginated run list (admins see all users)
+    GET  /runs/<id>             one run with its full step trace
+    POST /runs/<id>/stop        cancel a run mid-flight
+
+  Tickets (the demo HR helpdesk domain)
+    GET   /tickets              list the user's tickets
+    GET   /tickets/<id>         single ticket
+    PATCH /tickets/<id>         edit fields / append a sent reply
+    POST  /tickets/reset        wipe & reseed demo data
+    POST  /tickets/<id>/triage  run the AGENT LOOP on a ticket  <-- key endpoint
+
+  Other
+    GET  /knowledge-base        list files in knowledge_base/ for the KB tab
+    POST /chat                  the "Pip" chat widget (fixed pipeline, no loop)
+
+Every endpoint is wrapped in @require_auth, which provides g.user/g.is_admin.
+"""
+
 import json
 import os
 from datetime import date
@@ -12,6 +36,7 @@ from server.observability import record_step
 from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
+from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.utils import is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
@@ -24,7 +49,14 @@ from server.prompts import (
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 
+# --------------------------------------------------------------------------
+# Serialization helpers (ORM rows -> JSON-safe dicts for the frontend)
+# --------------------------------------------------------------------------
+
 def _serialize_steps(run, include_messages=False):
+    """The run's trace, in execution order. `include_messages` additionally
+    ships the full LLM prompt of each llm_call step (heavy, so opt-in —
+    only the run-detail endpoint asks for it)."""
     steps = RunStep.query.filter_by(run_id=run.id).order_by(RunStep.seq).all()
     out = []
     for s in steps:
@@ -40,6 +72,8 @@ def _serialize_steps(run, include_messages=False):
             item["llm_messages"] = s.llm_messages
         out.append(item)
     return out
+
+
 def _serialize_run(run):
     return {
         "run_id": run.id,
@@ -50,8 +84,10 @@ def _serialize_run(run):
     }
 
 
-
 def _owned_run(run_id):
+    """Fetch a run only if it belongs to the current user (via its
+    conversation). Returns None otherwise — the ownership check for
+    non-admin access."""
     return (
         Run.query.join(Conversation, Run.conversation_id == Conversation.id)
         .filter(Run.id == run_id, Conversation.user_id == g.user.id)
@@ -60,6 +96,8 @@ def _owned_run(run_id):
 
 
 def _parse_iso_date(value):
+    """'2026-08-14' -> date, anything else -> None (bad input is ignored,
+    not a 400)."""
     try:
         return date.fromisoformat(value) if value else None
     except ValueError:
@@ -67,13 +105,19 @@ def _parse_iso_date(value):
 
 
 def _filtered_runs_query():
-    """(Run, Conversation, User) rows with audit filters applied, scoped by role."""
+    """(Run, Conversation, User) rows with audit filters applied, scoped by role.
+
+    Shared by /runs and /runs/stats so both read identical query-string
+    filters: user_email (admin only), status, conversation_id, date_from/to.
+    Non-admins are always restricted to their own runs.
+    """
     q = (
         db.session.query(Run, Conversation, User)
         .join(Conversation, Run.conversation_id == Conversation.id)
         .join(User, Conversation.user_id == User.id)
     )
     if g.is_admin:
+        # Admins see everyone by default and may narrow to one user's email.
         email = (request.args.get("user_email") or "").strip().lower()
         if email:
             q = q.filter(func.lower(User.email) == email)
@@ -94,6 +138,7 @@ def _filtered_runs_query():
     return q
 
 
+# Histogram edges for the latency chart: [lo, hi) in milliseconds, hi=None = open-ended.
 LATENCY_BUCKETS = [
     ("<2s", 0, 2000),
     ("2–5s", 2000, 5000),
@@ -102,10 +147,17 @@ LATENCY_BUCKETS = [
 ]
 
 
+# --------------------------------------------------------------------------
+# Audit endpoints
+# --------------------------------------------------------------------------
+
 @api_bp.get("/runs/stats")
 @require_auth
 def run_stats():
+    """Aggregates for the Audit tab: status counts, success rate, token
+    totals, tool-usage counts, runs-per-day series, latency histogram."""
     rows = _filtered_runs_query().all()
+    # Squeeze each row down to the four fields the aggregations need.
     runs = [(run.id, run.status, run.created_at, run.total_latency_ms) for run, _, _ in rows]
     run_ids = [r[0] for r in runs]
 
@@ -113,9 +165,13 @@ def run_stats():
     for _, status, _, _ in runs:
         by_status[status] = by_status.get(status, 0) + 1
     completed = by_status.get("completed", 0)
+    # Success rate counts only terminal outcomes — runs still in flight or
+    # awaiting confirmation would skew the denominator.
     terminal = completed + by_status.get("failed", 0) + by_status.get("stopped", 0)
     success_rate = (completed / terminal) if terminal else None
 
+    # Step/token totals and tool usage come from SQL aggregates rather than
+    # loading every RunStep row into Python.
     total_steps = 0
     total_prompt = 0
     total_completion = 0
@@ -140,6 +196,7 @@ def run_stats():
             .group_by(RunStep.tool_name)
         )
 
+    # Runs-per-day stacked series for the activity chart.
     per_day = {}
     for _, status, created_at, _ in runs:
         day = created_at.date().isoformat()
@@ -152,6 +209,7 @@ def run_stats():
         {"date": day, **counts} for day, counts in sorted(per_day.items())
     ]
 
+    # Latency histogram (runs without a recorded latency are excluded).
     latencies = [lat for _, _, _, lat in runs if lat is not None]
     latency_buckets = []
     for label, lo, hi in LATENCY_BUCKETS:
@@ -177,9 +235,10 @@ def run_stats():
 @api_bp.get("/runs")
 @require_auth
 def list_runs():
+    """Paginated run table for the Audit tab (newest first)."""
     q = _filtered_runs_query()
     page = max(request.args.get("page", 1, type=int), 1)
-    per_page = min(max(request.args.get("per_page", 20, type=int), 1), 100)
+    per_page = min(max(request.args.get("per_page", 20, type=int), 1), 100)  # clamp 1..100
     total = q.count()
     rows = (
         q.order_by(Run.created_at.desc(), Run.id.desc())
@@ -187,6 +246,8 @@ def list_runs():
         .offset((page - 1) * per_page)
         .all()
     )
+    # Fetch per-run step counts / token sums and the goal texts in two bulk
+    # queries instead of one query per run (avoids the N+1 problem).
     run_ids = [run.id for run, _, _ in rows]
     step_aggs = {}
     goals = {}
@@ -213,7 +274,7 @@ def list_runs():
         item = {
             "id": run.id,
             "status": run.status,
-            "goal": (goals.get(run.user_message_id) or "")[:80],
+            "goal": (goals.get(run.user_message_id) or "")[:80],  # preview only
             "conversation_id": conv.id,
             "conversation_title": conv.title,
             "model": run.model,
@@ -224,13 +285,18 @@ def list_runs():
             "created_at": run.created_at.isoformat(),
         }
         if g.is_admin:
+            # Only admins learn whose run each row is.
             item["user_email"] = user.email
         runs.append(item)
     return jsonify({"runs": runs, "total": total, "page": page, "per_page": per_page})
 
+
 @api_bp.get("/runs/<int:run_id>")
 @require_auth
 def get_run(run_id):
+    """One run with its complete trace (including full LLM prompts) — powers
+    the step-by-step trace panel."""
+    # Admins may open any run; everyone else only their own.
     run = db.session.get(Run, run_id) if g.is_admin else _owned_run(run_id)
     if run is None:
         return jsonify({"error": "run not found"}), 404
@@ -242,6 +308,7 @@ def get_run(run_id):
         "created_at": run.created_at.isoformat(),
         "steps": _serialize_steps(run, include_messages=True),
     }
+    # Surface a pending confirmation so the UI can render approve/reject buttons.
     pending = PendingAction.query.filter_by(run_id=run.id, status="pending").first()
     if pending is not None:
         body["pending_action"] = {
@@ -255,12 +322,15 @@ def get_run(run_id):
 @api_bp.post("/runs/<int:run_id>/stop")
 @require_auth
 def stop_run(run_id):
+    """The Stop button. Sets run.status='stopped' in the DB; the agent loop
+    (running inside a DIFFERENT request) polls that status between steps via
+    db.session.refresh() and bails out when it sees it."""
     run = _owned_run(run_id) or db.session.get(Run, run_id)
     if not run:
         return jsonify({"error": "run not found"}), 404
-        
+
     run.status = "stopped"
-    
+
     # Log a step recording that the run was cancelled by user
     step_count = RunStep.query.filter_by(run_id=run.id).count() + 1
     stop_step = RunStep(
@@ -271,7 +341,7 @@ def stop_run(run_id):
     )
     db.session.add(stop_step)
     db.session.commit()
-    
+
     current_app.logger.info(f"Run #{run.id} explicitly marked as STOPPED.")
     return jsonify({"success": True, "status": "stopped", "run_id": run.id})
 
@@ -312,7 +382,16 @@ def confirm_run(run_id):
     return jsonify(outcome)
 
 
+# --------------------------------------------------------------------------
+# Ticket endpoints
+# --------------------------------------------------------------------------
+
 def seed_apexcare_tickets(user_id):
+    """Insert the five fictional ApexCare demo tickets for a user.
+
+    Called at registration (auth.register) and by /tickets/reset, so every
+    account starts with realistic data the agent can triage.
+    """
     sample_tickets = [
         {
             "ticket_number": "APX-1049",
@@ -403,6 +482,9 @@ def seed_apexcare_tickets(user_id):
 
 
 def _serialize_ticket(t):
+    """Ticket row -> frontend dict. getattr(...) defaults guard against rows
+    created before newer columns existed (SQLite dev DBs aren't migrated)."""
+    # replies_json is a JSON-encoded list in a TEXT column; decode defensively.
     replies = []
     if getattr(t, "replies_json", None):
         try:
@@ -436,12 +518,13 @@ def _serialize_ticket(t):
 @api_bp.get("/tickets")
 @require_auth
 def get_tickets():
+    """The user's tickets, optionally filtered by ?status= and ?category=."""
     status = request.args.get("status")
     category = request.args.get("category")
     q = Ticket.query.filter_by(user_id=g.user.id)
     if status:
         q = q.filter_by(status=status)
-    if category and category != "All":
+    if category and category != "All":  # "All" is the UI's no-filter sentinel
         q = q.filter_by(category=category)
     tickets = q.order_by(Ticket.created_at.desc()).all()
     return jsonify([_serialize_ticket(t) for t in tickets])
@@ -459,12 +542,17 @@ def get_ticket(ticket_id):
 @api_bp.post("/tickets/reset")
 @require_auth
 def reset_tickets_endpoint():
+    """Demo reset: wipe conversations/runs/messages/tickets, then reseed the
+    sample tickets. Children are deleted before parents to satisfy the
+    foreign-key constraints."""
     try:
         # 1. Direct bulk delete of child records (RunSteps & PendingActions) across ALL user runs
         user_conv_ids = [c.id for c in Conversation.query.filter_by(user_id=g.user.id).all()]
         user_run_ids = [r.id for r in Run.query.filter(Run.conversation_id.in_(user_conv_ids)).all()] if user_conv_ids else []
 
         # Delete all RunSteps and PendingActions unconditionally
+        # (note: the `... | isnot None` filter matches every row, so this
+        # clears ALL users' step/action data — acceptable for a demo reset).
         db.session.query(RunStep).filter(
             (RunStep.run_id.in_(user_run_ids)) | (RunStep.run_id.isnot(None))
         ).delete(synchronize_session=False)
@@ -494,9 +582,11 @@ def reset_tickets_endpoint():
         current_app.logger.error(f"Reseed failed: {e}")
         return jsonify({"error": "Failed to reset database", "details": str(e)}), 500
 
+
 @api_bp.patch("/tickets/<int:ticket_id>")
 @require_auth
 def update_ticket_endpoint(ticket_id):
+    """Partial update: only fields present in the JSON body are changed."""
     ticket = Ticket.query.filter_by(id=ticket_id, user_id=g.user.id).first()
     if ticket is None:
         return jsonify({"error": "ticket not found"}), 404
@@ -519,6 +609,8 @@ def update_ticket_endpoint(ticket_id):
     if "resolution_notes" in data:
         ticket.resolution_notes = data["resolution_notes"]
     if "new_reply" in data and data["new_reply"]:
+        # "Send" flow: append the reply to the sent-replies list and clear the
+        # draft slot (the draft has now become a real reply).
         existing = []
         if ticket.replies_json:
             try:
@@ -538,9 +630,25 @@ def update_ticket_endpoint(ticket_id):
     return jsonify(_serialize_ticket(ticket))
 
 
+def _next_run_seq(run_id):
+    """Same as agent._next_seq but keyed by id — next free step number."""
+    count = db.session.query(func.count(RunStep.id)).filter_by(run_id=run_id).scalar()
+    return count + 1
+
+
 @api_bp.post("/tickets/<int:ticket_id>/triage")
 @require_auth
 def triage_ticket_endpoint(ticket_id):
+    """Run the agent loop against one ticket — the main entry point into
+    server/agent.py.
+
+    Sequence:
+      1. mark the ticket in_triage, create Conversation + Message + Run rows
+      2. classify urgency with the LLM and write the priority onto the ticket
+      3. build the triage goal prompt and hand it to run_agent()
+      4. translate the outcome (stopped / failed / ok) into ticket state,
+         including a safe fallback draft when the agent fails
+    """
     ticket = Ticket.query.filter_by(id=ticket_id, user_id=g.user.id).first()
     if ticket is None:
         return jsonify({"error": "ticket not found"}), 404
@@ -553,19 +661,10 @@ def triage_ticket_endpoint(ticket_id):
     db.session.add(conv)
     db.session.commit()
 
-    user_prompt = TRIAGE_USER_PROMPT.format(
-        ticket_number=ticket.ticket_number,
-        requester_name=ticket.requester_name,
-        requester_department=ticket.requester_department,
-        requester_email=ticket.requester_email,
-        category=ticket.category,
-        channel=ticket.channel,
-        title=ticket.title,
-        description=ticket.description,
-        ticket_id=ticket.id,
-    )
-
-    msg = Message(conversation_id=conv.id, role="user", content=user_prompt)
+    # Placeholder message — content rewritten after urgency classification
+    # (the real prompt needs the classified priority, which we don't have yet,
+    # but the Run row requires a user_message_id up front).
+    msg = Message(conversation_id=conv.id, role="user", content=f"Triage ticket {ticket.ticket_number}")
     db.session.add(msg)
     db.session.commit()
 
@@ -573,13 +672,47 @@ def triage_ticket_endpoint(ticket_id):
     db.session.add(run)
     db.session.commit()
 
+    # Step 1: classify urgency / priority from ticket text (inbox-style priority logic).
+    # Recorded through record_step so the classification shows up in the trace.
+    urgency_messages = build_urgency_messages(ticket)
+    classification = record_step(
+        run.id,
+        _next_run_seq(run.id),
+        "llm_call",
+        lambda: classify_priority(ticket),
+        llm_messages=urgency_messages,
+    )
+    apply_priority(ticket, classification)
+
+    # Build the actual triage goal (now including the fresh priority) and
+    # overwrite the placeholder message so the trace shows the real prompt.
+    user_prompt = TRIAGE_USER_PROMPT.format(
+        ticket_number=ticket.ticket_number,
+        requester_name=ticket.requester_name,
+        requester_department=ticket.requester_department,
+        requester_email=ticket.requester_email,
+        category=ticket.category,
+        priority=ticket.priority,
+        channel=ticket.channel,
+        title=ticket.title,
+        description=ticket.description,
+        ticket_id=ticket.id,
+    )
+    msg.content = user_prompt
+    db.session.commit()
+
+    # Step 2: the bounded agent loop does the real work.
     try:
         outcome = run_agent(run, user_prompt)
     except Exception:
+        # Any unexpected crash inside the loop is treated like a failed run
+        # and handled by the fallback below.
         outcome = {"status": "failed"}
 
     db.session.refresh(run)
     if run.status == "stopped" or outcome.get("status") == "stopped":
+        # User cancelled: put the ticket back to open. 499 is the (nginx)
+        # convention for "client closed request".
         ticket.status = "open"
         run.status = "stopped"
         db.session.commit()
@@ -594,6 +727,9 @@ def triage_ticket_endpoint(ticket_id):
         }), 499
 
     if outcome.get("status") == "failed":
+        # Graceful degradation: never leave the ticket with nothing. Store a
+        # generic holding reply (confidence 0 so the UI flags it) and record
+        # it in the trace like a normal create_draft call.
         current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
 
         draft_text = (
@@ -605,7 +741,7 @@ def triage_ticket_endpoint(ticket_id):
 
         record_step(
             run.id,
-            1,
+            _next_run_seq(run.id),
             "tool_call",
             lambda: create_draft(ticket.id, draft_text),
             tool_name="create_draft",
@@ -613,7 +749,7 @@ def triage_ticket_endpoint(ticket_id):
         )
 
         ticket.draft_reply = draft_text
-        ticket.draft_confidence = 0
+        ticket.draft_confidence = 0  # signals "fallback, needs human eyes"
         ticket.status = "open"
         run.status = "failed"
         db.session.commit()
@@ -624,7 +760,7 @@ def triage_ticket_endpoint(ticket_id):
             "answer": "Triage failed. Applied safe fallback draft.",
         }
 
-    # Refresh ticket
+    # Refresh ticket — the agent's tools may have changed it (draft, status).
     db.session.refresh(ticket)
     return jsonify({
         "ticket": _serialize_ticket(ticket),
@@ -633,32 +769,45 @@ def triage_ticket_endpoint(ticket_id):
     })
 
 
+# --------------------------------------------------------------------------
+# Knowledge-base listing
+# --------------------------------------------------------------------------
 
 @api_bp.get("/knowledge-base")
 @require_auth
 def get_knowledge_base_articles():
+    """List the documents in knowledge_base/ for the KB tab.
+
+    Reads the folder directly from disk (NOT from AnythingLLM) — this endpoint
+    only powers the browsing UI; actual retrieval still goes through
+    search_knowledge().
+    """
     kb_dir = current_app.config.get("KNOWLEDGE_BASE_DIR") or os.path.join(current_app.root_path, "..", "knowledge_base")
     kb_dir = os.path.abspath(kb_dir)
 
     docs = []
     if os.path.exists(kb_dir):
         for fname in sorted(os.listdir(kb_dir)):
+            # Skip dotfiles and the folder's own README.
             if fname.startswith(".") or fname.lower() == "readme.md":
                 continue
-                
+
             if fname.endswith((".pdf", ".md", ".txt")):
                 fpath = os.path.join(kb_dir, fname)
                 try:
                     size_bytes = os.path.getsize(fpath)
+                    # "benefits_overview_2026.md" -> "Benefits Overview 2026"
                     base_name = os.path.splitext(fname)[0]
                     title = base_name.replace("_", " ").replace("-", " ").title()
 
                     ext = os.path.splitext(fname)[1].lower()
                     if ext in (".md", ".txt"):
+                        # Text files get a real content preview (first 400 chars).
                         with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                             snippet = f.read(400).strip()
                         content = f"{snippet}..." if snippet else "Text document."
                     else:
+                        # Binary (PDF): no preview, just a pointer to the agent.
                         content = f"Official policy document ({ext.upper()[1:]}). Please use the Pip Assistant to search this document's contents for specific details."
 
                     docs.append({
@@ -674,15 +823,36 @@ def get_knowledge_base_articles():
     return jsonify(docs)
 
 
+# --------------------------------------------------------------------------
+# Pip chat widget
+# --------------------------------------------------------------------------
+
 @api_bp.post("/chat")
 @require_auth
 def pip_chat():
+    """The conversational chat widget.
+
+    Unlike triage, this is NOT the agent loop — it's a fixed 3-step pipeline
+    (the model here gets no tools):
+
+      step 1 (seq 1, llm_call):   classify — does this need the knowledge base?
+      step 2 (seq 2, tool_call):  search_knowledge, only if step 1 said YES
+      step 3 (seq 3, llm_call):   compose the reply with ticket + KB context
+
+    Steps are still logged as RunStep rows so chats appear in the Audit tab.
+    A quirk of this fixed pipeline: the RunStep rows are written BEFORE each
+    stage runs (with placeholder results like {"status": "searching"}) and
+    updated afterwards, unlike the agent loop where record_step writes the
+    finished step.
+    """
     data = request.get_json(silent=True) or {}
     message_text = (data.get("message") or "").strip()
     if not message_text:
         return jsonify({"error": "message is required"}), 400
 
-    # Step 0: Active Support Tickets Context & Name Lookup Engine
+    # Step 0: Active Support Tickets Context & Name Lookup Engine.
+    # Serialize ALL of the user's tickets into the system prompt so the model
+    # can answer "what's Dave's ticket about?" without any tool call.
     active_tickets = Ticket.query.filter_by(user_id=g.user.id).order_by(Ticket.created_at.desc()).all()
     tickets_summary = []
     for t in active_tickets:
@@ -710,12 +880,13 @@ def pip_chat():
 
     tickets_context = f"\n\nCURRENT_ACTIVE_TICKETS:\n{json.dumps(tickets_summary, indent=2)}"
 
+    # All chat turns share one conversation per user (created on first chat).
     conv = Conversation.query.filter_by(user_id=g.user.id).first()
     if not conv:
         conv = Conversation(user_id=g.user.id, title="Pip Chat")
         db.session.add(conv)
         db.session.commit()
-    
+
     msg = Message(conversation_id=conv.id, role="user", content=message_text)
     db.session.add(msg)
     db.session.commit()
@@ -730,6 +901,7 @@ def pip_chat():
     db.session.commit()
 
     # Step 0.5: Classify query to see if it needs knowledge base search
+    # (skips the slow RAG round-trip for greetings/small talk).
     step1 = RunStep(
         run_id=run.id,
         seq=1,
@@ -739,11 +911,12 @@ def pip_chat():
     db.session.add(step1)
     db.session.commit()
 
-    needs_kb = True
+    needs_kb = True  # fail open: when unsure, search anyway
     try:
         classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
         class_res = generate([{"role": "user", "content": classification_prompt}], tools=[])
         class_content = (class_res.get("content") or "").strip().upper()
+        # Only skip the KB when the model UNambiguously said NO.
         if "NO" in class_content and "YES" not in class_content:
             needs_kb = False
         step1.result = {"status": "classified", "needs_kb": needs_kb}
@@ -770,6 +943,8 @@ def pip_chat():
             kb_result = search_knowledge(message_text)
             if kb_result and "error" not in str(kb_result):
                 kb_context = f"\n\nAUDITED_POLICY_KNOWLEDGE_RESULT:\n{json.dumps(kb_result)}"
+                # search_knowledge instructs AnythingLLM to emit this exact
+                # sentinel when the documents don't cover the question.
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
@@ -781,6 +956,7 @@ def pip_chat():
         # If knowledge search was skipped because query is playful/off-topic, treat it as no policy match
         no_policy_match = True
 
+    # Assemble the final prompt: persona (+ no-match addendum) + tickets + KB.
     system_prompt = PIP_SYSTEM_PROMPT
     if no_policy_match:
         system_prompt += PIP_SYSTEM_PROMPT_NO_POLICY_MATCH
@@ -790,6 +966,8 @@ def pip_chat():
         {"role": "user", "content": message_text}
     ]
 
+    # Cancellation checks (same two signals the agent loop uses) before the
+    # expensive final generation...
     if is_client_disconnected():
         current_app.logger.info("Chat generation aborted: client disconnected.")
         run.status = "stopped"
@@ -801,6 +979,7 @@ def pip_chat():
         current_app.logger.info("Chat generation aborted: run status set to stopped.")
         return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
+    # Step 2 (seq 3): compose the actual reply.
     step3 = RunStep(
         run_id=run.id,
         seq=3,
@@ -812,40 +991,43 @@ def pip_chat():
 
     try:
         res = generate(messages, tools=[])
-        
-        # Verify client is still connected before committing or returning
+
+        # ...and re-check after generation, before committing/returning
+        # (generation takes seconds; the user may have stopped meanwhile).
         if is_client_disconnected():
             current_app.logger.info("Chat generation aborted: client disconnected.")
             run.status = "stopped"
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
-            
+
         db.session.refresh(run)
         if run.status == "stopped":
             current_app.logger.info("Chat generation aborted: run status set to stopped.")
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
         content = res.get("content") or "I'm ready to assist you. Which ticket or policy question shall we tackle next?"
-        
+
         step3.result = {"content": content}
         run.status = "completed"
         db.session.commit()
-        
+
         return jsonify({"reply": content, "run_id": run.id})
     except Exception as e:
+        # The generate() call itself failed. A stop/disconnect racing with the
+        # failure still wins and reports "stopped" rather than an error.
         if is_client_disconnected():
             run.status = "stopped"
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
-            
+
         db.session.refresh(run)
         if run.status == "stopped":
             current_app.logger.info("Chat generation aborted: run status set to stopped.")
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
-            
+
         # Log the exact failure for your own debugging and telemetry
         current_app.logger.error(f"Chat LLM generation failed: {str(e)}")
-        
+
         step3.result = {"error": str(e)}
         run.status = "failed"
         db.session.commit()
@@ -855,7 +1037,6 @@ def pip_chat():
             "I'm sorry, but I am currently experiencing a connection issue and cannot process your request. "
             "Please try asking again in a few moments, or reach out to the HR Helpdesk directly if this is urgent."
         )
-        
+
         # Return a 200 so the frontend chat UI doesn't crash, but displays the error text smoothly
         return jsonify({"reply": reply_text, "run_id": run.id})
-

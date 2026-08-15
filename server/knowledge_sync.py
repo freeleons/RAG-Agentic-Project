@@ -1,4 +1,7 @@
-"""Sync resolved tickets into the AnythingLLM knowledge base."""
+"""Feedback loop into the knowledge base: resolved tickets are pushed to
+AnythingLLM as raw-text documents so future search_knowledge() calls can find
+answers in past resolutions, not just the static policy PDFs.
+"""
 
 import requests
 from flask import current_app
