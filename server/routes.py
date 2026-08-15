@@ -36,6 +36,7 @@ from server.observability import record_step
 from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
+from server.sanitization import reject_if_injection
 from server.utils import is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
@@ -611,6 +612,16 @@ def triage_ticket_endpoint(ticket_id):
     if ticket is None:
         return jsonify({"error": "ticket not found"}), 404
 
+    # Layer-1 input sanitization: reject obvious injection probes in ticket text
+    # before any LLM call or status mutation.
+    blocked = reject_if_injection(
+        ticket.title or "",
+        ticket.description or "",
+        source="triage",
+    )
+    if blocked is not None:
+        return blocked
+
     ticket.status = "in_triage"
     db.session.commit()
 
@@ -807,6 +818,11 @@ def pip_chat():
     message_text = (data.get("message") or "").strip()
     if not message_text:
         return jsonify({"error": "message is required"}), 400
+
+    # Layer-1 input sanitization: reject obvious injection probes before any LLM call.
+    blocked = reject_if_injection(message_text, source="chat")
+    if blocked is not None:
+        return blocked
 
     # Step 0: Active Support Tickets Context & Name Lookup Engine.
     # Serialize ALL of the user's tickets into the system prompt so the model
