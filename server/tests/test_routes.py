@@ -305,4 +305,43 @@ def test_pip_chat_knowledge_search_does_not_insert_draft(client, auth_headers, m
     assert ticket.draft_reply is None
 
 
+def test_knowledge_base_endpoints(client, auth_headers):
+    # Test unauthenticated access
+    assert client.get("/api/knowledge-base").status_code == 401
+    assert client.get("/api/knowledge-base/file/policies.md").status_code == 401
+
+    # Test authenticated listing
+    resp = client.get("/api/knowledge-base", headers=auth_headers)
+    assert resp.status_code == 200
+    docs = resp.get_json()
+    assert isinstance(docs, list)
+    assert len(docs) > 0
+
+    # Verify types and content
+    md_doc = next((d for d in docs if d["filename"].endswith(".md")), None)
+    assert md_doc is not None
+    assert md_doc["file_type"] == "markdown"
+    assert "HR & Benefits" in md_doc["category"]
+    assert len(md_doc["content"]) > 100  # Full content loaded
+
+    pdf_doc = next((d for d in docs if d["filename"].endswith(".pdf")), None)
+    assert pdf_doc is not None
+    assert pdf_doc["file_type"] == "pdf"
+    assert pdf_doc["mime_type"] == "application/pdf"
+
+    # Test raw file endpoint
+    raw_md = client.get(f"/api/knowledge-base/file/{md_doc['filename']}", headers=auth_headers)
+    assert raw_md.status_code == 200
+    assert "text/markdown" in raw_md.headers.get("Content-Type", "")
+    assert len(raw_md.data) > 0
+
+    raw_pdf = client.get(f"/api/knowledge-base/file/{pdf_doc['filename']}", headers=auth_headers)
+    assert raw_pdf.status_code == 200
+    assert "application/pdf" in raw_pdf.headers.get("Content-Type", "")
+    assert len(raw_pdf.data) > 0
+
+    # Test 404 for nonexistent file or path traversal
+    assert client.get("/api/knowledge-base/file/nonexistent.pdf", headers=auth_headers).status_code == 404
+    assert client.get("/api/knowledge-base/file/../routes.py", headers=auth_headers).status_code == 404
+
 

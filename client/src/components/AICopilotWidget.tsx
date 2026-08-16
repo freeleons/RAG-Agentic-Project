@@ -16,7 +16,6 @@ interface AICopilotWidgetProps {
   isProcessing: boolean;
   onBotThinkingChange?: (isThinking: boolean) => void;
   pendingDraftQuery?: string | null;
-  onClearPendingDraftQuery?: () => void;
   onTicketUpdated?: () => void;
   onDraftGenerated?: (draftText: string, ticketId?: number) => void;
 }
@@ -507,7 +506,6 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                   >
                     <p className="whitespace-pre-wrap">{msg.text}</p>
                     {msg.sender === "pip" && msg.tools && <AgentToolTrace tools={msg.tools} />}
-
                     <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200/50 dark:border-slate-700/50 text-[9px]">
                       {msg.sender === "pip" ? (
                         <CopyButton text={msg.text} />
