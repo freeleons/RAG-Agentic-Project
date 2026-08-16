@@ -14,7 +14,6 @@ from server.models import PendingAction, db
 TOOL_TIERS = {
     "search_knowledge": 1,
     "list_tickets": 1,
-    "escalate": 2,
 }
 
 # Tools at or above this tier pause for HITL confirmation.

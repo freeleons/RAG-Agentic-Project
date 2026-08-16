@@ -10,8 +10,8 @@ from server.hitl import (
 def test_tiers_match_expected_policy():
     assert tool_tier("search_knowledge") < HITL_TIER_THRESHOLD
     assert tool_tier("list_tickets") < HITL_TIER_THRESHOLD
-    assert tool_tier("escalate") >= HITL_TIER_THRESHOLD
-    assert requires_hitl("escalate") is True
+    assert tool_tier("unknown_consequential_tool") >= HITL_TIER_THRESHOLD
+    assert requires_hitl("unknown_consequential_tool") is True
     assert requires_hitl("search_knowledge") is False
 
 
@@ -33,16 +33,23 @@ def test_execute_low_tier_runs_immediately(app, monkeypatch):
     assert outcome.result["answer"] == "ok"
 
 
-def test_execute_high_tier_pauses_with_pending_action(app, run):
+def test_execute_high_tier_pauses_with_pending_action(app, run, monkeypatch):
+    from server.tools import TOOLS
+
+    monkeypatch.setitem(
+        TOOLS,
+        "admin_action",
+        {"handler": lambda **kw: {"status": "ok"}, "requires_confirmation": True},
+    )
     outcome = execute_tool_with_hitl(
-        "escalate",
-        {"ticket_id": "T-1", "priority": "high", "reason": "outage"},
+        "admin_action",
+        {"ticket_id": "T-1", "action": "delete"},
         run=run,
     )
     assert outcome.status == "needs_confirmation"
-    assert outcome.pending_action["tool"] == "escalate"
+    assert outcome.pending_action["tool"] == "admin_action"
     assert run.status == "needs_confirmation"
     from server.models import PendingAction
 
     pending = PendingAction.query.filter_by(run_id=run.id, status="pending").one()
-    assert pending.tool_name == "escalate"
+    assert pending.tool_name == "admin_action"

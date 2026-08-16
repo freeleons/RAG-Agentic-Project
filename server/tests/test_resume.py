@@ -7,10 +7,10 @@ def scripted(*responses):
     return fake_generate
 
 
-ESCALATE_CALL = {
+MOCK_ACTION_CALL = {
     "type": "tool_call",
-    "name": "escalate",
-    "arguments": {"ticket_id": "T-1", "priority": "high", "reason": "outage"},
+    "name": "mock_action",
+    "arguments": {"ticket_id": "T-1", "action": "archive"},
     "call_id": "c1",
 }
 
@@ -22,16 +22,25 @@ def test_resume_approved_executes_tool_and_completes(app, run, monkeypatch):
 
     monkeypatch.setattr(
         "server.agent.generate",
-        scripted(ESCALATE_CALL, {"type": "final", "content": "Escalated to the on-call queue."}),
+        scripted(MOCK_ACTION_CALL, {"type": "final", "content": "Action completed."}),
     )
     executed = {}
     monkeypatch.setitem(
-        TOOLS["escalate"],
-        "handler",
-        lambda **kwargs: executed.update(kwargs) or {"status": "escalated"},
+        TOOLS,
+        "mock_action",
+        {
+            "handler": lambda **kwargs: executed.update(kwargs) or {"status": "ok"},
+            "requires_confirmation": True,
+            "description": "Mock action",
+            "schema": {
+                "type": "object",
+                "properties": {"ticket_id": {"type": "string"}, "action": {"type": "string"}},
+                "required": ["ticket_id", "action"],
+            },
+        },
     )
 
-    assert run_agent(run, "Escalate ticket T-1")["status"] == "needs_confirmation"
+    assert run_agent(run, "Perform action on ticket T-1")["status"] == "needs_confirmation"
     outcome = resume_run(run, approved=True)
     assert outcome["status"] == "completed"
     assert executed["ticket_id"] == "T-1"
@@ -46,12 +55,25 @@ def test_resume_rejected_skips_tool_and_ends_declined(app, run, monkeypatch):
 
     monkeypatch.setattr(
         "server.agent.generate",
-        scripted(ESCALATE_CALL, {"type": "final", "content": "Understood, I won't escalate."}),
+        scripted(MOCK_ACTION_CALL, {"type": "final", "content": "Understood, I won't proceed."}),
     )
     called = []
-    monkeypatch.setitem(TOOLS["escalate"], "handler", lambda **kw: called.append(kw))
+    monkeypatch.setitem(
+        TOOLS,
+        "mock_action",
+        {
+            "handler": lambda **kw: called.append(kw),
+            "requires_confirmation": True,
+            "description": "Mock action",
+            "schema": {
+                "type": "object",
+                "properties": {"ticket_id": {"type": "string"}, "action": {"type": "string"}},
+                "required": ["ticket_id", "action"],
+            },
+        },
+    )
 
-    run_agent(run, "Escalate ticket T-1")
+    run_agent(run, "Perform action on ticket T-1")
     outcome = resume_run(run, approved=False)
     assert outcome["status"] == "declined"
     assert called == []  # the tool never ran

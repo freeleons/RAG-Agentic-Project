@@ -1,40 +1,12 @@
-def test_escalate_persists_ticket_state(app):
-    """Escalate should persist status / priority / reason on the ticket."""
-    from server.models import Ticket, User, db
-    from server.tools.escalate import escalate
-
-    with app.app_context():
-        user = User(email="esc@test.com", password_hash="x")
-        db.session.add(user)
-        db.session.commit()
-        ticket = Ticket(
-            user_id=user.id,
-            title="Outage",
-            description="VPN down for whole team",
-            status="open",
-            priority="medium",
-        )
-        db.session.add(ticket)
-        db.session.commit()
-        ticket_id = ticket.id
-
-        result = escalate(ticket_id=str(ticket_id), priority="urgent", reason="team-wide outage")
-        assert result["status"] == "escalated"
-        assert result["priority"] == "urgent"
-
-        db.session.refresh(ticket)
-        assert ticket.status == "escalated"
-        assert ticket.priority == "urgent"
-        assert ticket.escalation_reason == "team-wide outage"
-
-
 def test_action_tools_registered_with_confirmation(app):
     from server.tools import TOOLS, validate_arguments
 
-    # Design rule: consequential actions must require HITL confirmation
-    assert TOOLS["escalate"]["requires_confirmation"] is True
-    assert validate_arguments("escalate", {"ticket_id": "T-1", "priority": "wrong", "reason": "x"}) is not None
-    assert validate_arguments(
-        "escalate", {"ticket_id": "T-1", "priority": "high", "reason": "x"}
-    ) is None
+    assert "search_knowledge" in TOOLS
+    assert "list_tickets" in TOOLS
+    assert TOOLS["search_knowledge"]["requires_confirmation"] is False
+    assert TOOLS["list_tickets"]["requires_confirmation"] is False
+    assert validate_arguments("search_knowledge", {}) is not None
+    assert validate_arguments("search_knowledge", {"query": "PTO"}) is None
     assert "create_draft" not in TOOLS
+    assert "escalate" not in TOOLS
+
