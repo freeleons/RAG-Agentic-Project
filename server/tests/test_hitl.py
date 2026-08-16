@@ -10,7 +10,6 @@ from server.hitl import (
 def test_tiers_match_expected_policy():
     assert tool_tier("search_knowledge") < HITL_TIER_THRESHOLD
     assert tool_tier("list_tickets") < HITL_TIER_THRESHOLD
-    assert tool_tier("create_draft") >= HITL_TIER_THRESHOLD
     assert tool_tier("escalate") >= HITL_TIER_THRESHOLD
     assert requires_hitl("escalate") is True
     assert requires_hitl("search_knowledge") is False

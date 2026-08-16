@@ -33,7 +33,6 @@ from server.auth import require_auth
 from server.llm import generate
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
-from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
@@ -739,8 +738,7 @@ def triage_ticket_endpoint(ticket_id):
 
     if outcome.get("status") == "failed":
         # Graceful degradation: never leave the ticket with nothing. Store a
-        # generic holding reply (confidence 0 so the UI flags it) and record
-        # it in the trace like a normal create_draft call.
+        # generic holding reply (confidence 0 so the UI flags it).
         current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
 
         draft_text = (
@@ -748,15 +746,6 @@ def triage_ticket_endpoint(ticket_id):
             f"Thank you for contacting ApexCare Support regarding '{ticket.title}'.\n\n"
             f"Our automated triage system is currently experiencing a delay, but your ticket has been securely logged. "
             f"An HR representative will review your request and assist you shortly."
-        )
-
-        record_step(
-            run.id,
-            _next_run_seq(run.id),
-            "tool_call",
-            lambda: create_draft(ticket.id, draft_text),
-            tool_name="create_draft",
-            arguments={"ticket_id": ticket.id, "reply_text": draft_text},
         )
 
         ticket.draft_reply = draft_text

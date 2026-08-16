@@ -138,7 +138,7 @@ class Ticket(db.Model):
     """A support ticket in the demo HR helpdesk (the domain the agent works on).
 
     Tickets are seeded per user at registration (routes.seed_apexcare_tickets)
-    and mutated by the agent's tools (create_draft, escalate) and the REST API.
+    and mutated by the agent's tools (escalate) and the REST API.
     """
 
     __tablename__ = "tickets"

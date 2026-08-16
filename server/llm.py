@@ -136,7 +136,6 @@ def generate(messages, tools, max_retries=3, timeout=120):
                         "search_knowledge",
                         "list_tickets",
                         "update_ticket",
-                        "create_draft",
                         "escalate",
                     ]:
                         args = (
