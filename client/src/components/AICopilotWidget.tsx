@@ -16,6 +16,7 @@ interface AICopilotWidgetProps {
   isProcessing: boolean;
   onBotThinkingChange?: (isThinking: boolean) => void;
   pendingDraftQuery?: string | null;
+  onClearPendingDraftQuery?: () => void;
   onTicketUpdated?: () => void;
   onDraftGenerated?: (draftText: string, ticketId?: number) => void;
 }
