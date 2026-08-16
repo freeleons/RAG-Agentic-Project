@@ -9,16 +9,22 @@ from __future__ import annotations
 
 import re
 
-from flask import current_app, jsonify
+from flask import Response, current_app, jsonify
 
 # Obvious jailbreak / prompt-hijack phrases. Cheap and imperfect — false
 # negatives are expected; this only catches the noisiest attempts.
 _OBVIOUS_PATTERNS = [
-    re.compile(r"ignore\s+(all\s+|the\s+)?(previous|prior|above)\s+instructions?", re.I),
-    re.compile(r"disregard\s+(all\s+|the\s+)?(previous|prior|above)\s+instructions?", re.I),
-    re.compile(r"system\s+prompt", re.I),
-    re.compile(r"you\s+are\s+now\s+(a|an)\s+", re.I),
-    re.compile(r"override\s+(your|the)\s+(instructions?|rules?|system)", re.I),
+    re.compile(
+        r"\b(ignore|disregard|forget)\s+(all\s+|the\s+)?(previous|prior|above|preceding)\s+(instructions?|rules?|commands?|directives?)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(print|reveal|show|dump|repeat|output|what\s+is)\s+(your\s+|the\s+)?system\s+prompt\b",
+        re.I,
+    ),
+    re.compile(r"\bsystem\s+prompt\b", re.I),
+    re.compile(r"\byou\s+are\s+now\s+(a|an)\b", re.I),
+    re.compile(r"\boverride\s+(your|the)\s+(instructions?|rules?|system)\b", re.I),
 ]
 
 
@@ -32,7 +38,7 @@ def regex_blocked(text: str) -> str | None:
     return None
 
 
-def reject_if_injection(*texts: str, source: str):
+def reject_if_injection(*texts: str, source: str) -> tuple[Response, int] | None:
     """If any text matches the blocklist, log and return a Flask (json, 400) tuple.
 
     Returns None when all texts are clean, so callers can write:
