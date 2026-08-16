@@ -162,4 +162,42 @@ describe("KnowledgeInspectorModal", () => {
 
     expect(screen.getByText(/No documents found matching "nonexistent"/i)).toBeInTheDocument();
   });
+
+  it("supports collapsing sidebar and entering full-focus mode for maximum real estate", async () => {
+    vi.spyOn(api, "fetchKnowledgeDocuments").mockResolvedValue(mockDocs);
+
+    render(<KnowledgeInspectorModal onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("ApexCare HR Policies").length).toBeGreaterThan(0);
+    });
+
+    // Sidebar is initially visible with Hide Sidebar button
+    const hideSidebarBtn = screen.getByRole("button", { name: /Hide Sidebar/i });
+    expect(hideSidebarBtn).toBeInTheDocument();
+
+    // Toggle hide sidebar
+    fireEvent.click(hideSidebarBtn);
+
+    // Docs expand button appears
+    const showDocsBtn = screen.getByRole("button", { name: /Docs \(3\)/i });
+    expect(showDocsBtn).toBeInTheDocument();
+
+    // Expand sidebar again
+    fireEvent.click(showDocsBtn);
+    expect(screen.getByRole("button", { name: /Hide Sidebar/i })).toBeInTheDocument();
+
+    // Toggle Focus Mode
+    const focusBtn = screen.getByRole("button", { name: /Focus Mode/i });
+    fireEvent.click(focusBtn);
+
+    // Top banner is hidden in focus mode, Exit Focus button is present
+    expect(screen.getByRole("button", { name: /Exit Focus/i })).toBeInTheDocument();
+    expect(screen.queryByText("📚 Policy Knowledge Base")).not.toBeInTheDocument();
+
+    // Exit Focus Mode
+    fireEvent.click(screen.getByRole("button", { name: /Exit Focus/i }));
+    expect(screen.getByText("📚 Policy Knowledge Base")).toBeInTheDocument();
+  });
 });
+
