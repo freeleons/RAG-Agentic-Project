@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "../App";
@@ -39,23 +39,21 @@ test("sending a message to Pip renders the response in the copilot chat", async 
   expect(await screen.findByText("I can help with that! Please look at the VPN policy.")).toBeInTheDocument();
 });
 
-test("triage ticket flow", async () => {
+test("draft with pip inputs message into pip chat and renders response with copy button", async () => {
   renderAuthed({
-    "POST /api/tickets/1/triage": () => jsonResponse({ 
-      ticket: { ...TICKETS[0], status: "draft_pending", draft_reply: "Proposed reply: reset your VPN." }, 
-      run: { id: 101, run_id: 101, status: "completed" } 
-    }),
-    "GET /api/runs/101": () => jsonResponse({ run: { id: 101, run_id: 101, status: "completed" }, steps: [] }),
+    "POST /api/chat": () => jsonResponse({ reply: "Here is a drafted response for Dave: Please reset your VPN token at vpn.apexcare.tech.", run_id: 101 }),
+    "GET /api/runs/101": () => jsonResponse({ run: { id: 101, status: "completed" }, steps: [] }),
     "GET /api/runs?page=1&per_page=1": () => jsonResponse({ runs: [] }),
   });
   
   await userEvent.click((await screen.findAllByText("VPN ticket"))[0]);
   
-  const triageBtn = await screen.findByRole("button", { name: /draft with pip/i });
-  await userEvent.click(triageBtn);
+  const draftBtn = await screen.findByRole("button", { name: /draft with pip/i });
+  await userEvent.click(draftBtn);
   
-  await waitFor(() => {
-    const textarea = screen.getByPlaceholderText(/Write a reply/i) as HTMLTextAreaElement;
-    expect(textarea.value).toBe("Proposed reply: reset your VPN.");
-  });
+  // Pip chat should display the response
+  expect(await screen.findByText(/Here is a drafted response for Dave/i)).toBeInTheDocument();
+  // Copy buttons should be present on Pip's replies
+  const copyButtons = screen.getAllByRole("button", { name: /copy reply/i });
+  expect(copyButtons.length).toBeGreaterThanOrEqual(2);
 });

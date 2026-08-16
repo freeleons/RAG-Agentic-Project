@@ -14,6 +14,9 @@ interface AICopilotWidgetProps {
   tickets?: Ticket[];
   latestRun: AgentRun | null;
   isProcessing: boolean;
+  onBotThinkingChange?: (isThinking: boolean) => void;
+  pendingDraftQuery?: string | null;
+  onClearPendingDraftQuery?: () => void;
 }
 
 interface ChatMessage {
@@ -24,9 +27,75 @@ interface ChatMessage {
   tools?: ToolActivity[];
 }
 
+export const CopyButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-999999px";
+        textarea.style.top = "-999999px";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied to clipboard!" : "Copy message to clipboard"}
+      aria-label="Copy reply"
+      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all duration-150 cursor-pointer ${
+        copied
+          ? "bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+          : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 border border-slate-200/60 dark:border-slate-700/60 bg-white/70 dark:bg-slate-900/60"
+      }`}
+    >
+      {copied ? (
+        <>
+          <svg className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-bold">Copied!</span>
+        </>
+      ) : (
+        <>
+          <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+            />
+          </svg>
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
+};
+
 export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   user,
   isProcessing,
+  onBotThinkingChange,
+  pendingDraftQuery,
+  onClearPendingDraftQuery,
 }) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -113,6 +182,19 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
     return () => clearInterval(ticker);
   }, [isBotThinking]);
+
+  // Report thinking status up to parent
+  useEffect(() => {
+    onBotThinkingChange?.(isBotThinking);
+  }, [isBotThinking, onBotThinkingChange]);
+
+  // Handle incoming draft query from Draft with Pip button
+  useEffect(() => {
+    if (pendingDraftQuery && pendingDraftQuery.trim()) {
+      handleSendChatMessage(pendingDraftQuery);
+      onClearPendingDraftQuery?.();
+    }
+  }, [pendingDraftQuery]);
 
   const liveProgress = useMemo(() => deriveAgentProgress(runSteps), [runSteps]);
 
@@ -357,11 +439,18 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                         : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none shadow-xs"
                       }`}
                   >
-                    <p>{msg.text}</p>
+                    <p className="whitespace-pre-wrap">{msg.text}</p>
                     {msg.sender === "pip" && msg.tools && <AgentToolTrace tools={msg.tools} />}
-                    <span className="text-[9px] opacity-70 block text-right mt-1 font-mono">
-                      {msg.timestamp}
-                    </span>
+                    <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200/50 dark:border-slate-700/50 text-[9px]">
+                      {msg.sender === "pip" ? (
+                        <CopyButton text={msg.text} />
+                      ) : (
+                        <span></span>
+                      )}
+                      <span className="opacity-70 font-mono">
+                        {msg.timestamp}
+                      </span>
+                    </div>
                   </div>
                 </div>
               );
