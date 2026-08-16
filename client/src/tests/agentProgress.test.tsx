@@ -67,8 +67,8 @@ describe("deriveAgentProgress", () => {
     const steps = [
       llmToolCall(1, "search_knowledge", { query: "fsa" }),
       toolResult(2, "search_knowledge", { answer: "a" }),
-      llmToolCall(3, "create_draft", { ticket_id: "T-1", reply_text: "hi" }),
-      toolResult(4, "create_draft", { draft_id: 9 }),
+      llmToolCall(3, "escalate", { ticket_id: "T-1", priority: "urgent", reason: "outage" }),
+      toolResult(4, "escalate", { status: "escalated" }),
     ];
 
     const live = deriveAgentProgress(steps);

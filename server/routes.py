@@ -25,7 +25,7 @@ Every endpoint is wrapped in @require_auth, which provides g.user/g.is_admin.
 import json
 import os
 from datetime import date
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request, send_from_directory
 from sqlalchemy import func
 
 from server.agent import resume_run, run_agent
@@ -33,7 +33,6 @@ from server.auth import require_auth
 from server.llm import generate
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
-from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
@@ -739,8 +738,7 @@ def triage_ticket_endpoint(ticket_id):
 
     if outcome.get("status") == "failed":
         # Graceful degradation: never leave the ticket with nothing. Store a
-        # generic holding reply (confidence 0 so the UI flags it) and record
-        # it in the trace like a normal create_draft call.
+        # generic holding reply (confidence 0 so the UI flags it).
         current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
 
         draft_text = (
@@ -748,15 +746,6 @@ def triage_ticket_endpoint(ticket_id):
             f"Thank you for contacting ApexCare Support regarding '{ticket.title}'.\n\n"
             f"Our automated triage system is currently experiencing a delay, but your ticket has been securely logged. "
             f"An HR representative will review your request and assist you shortly."
-        )
-
-        record_step(
-            run.id,
-            _next_run_seq(run.id),
-            "tool_call",
-            lambda: create_draft(ticket.id, draft_text),
-            tool_name="create_draft",
-            arguments={"ticket_id": ticket.id, "reply_text": draft_text},
         )
 
         ticket.draft_reply = draft_text
@@ -812,26 +801,58 @@ def get_knowledge_base_articles():
                     title = base_name.replace("_", " ").replace("-", " ").title()
 
                     ext = os.path.splitext(fname)[1].lower()
-                    if ext in (".md", ".txt"):
-                        # Text files get a real content preview (first 400 chars).
+                    if ext == ".pdf":
+                        file_type = "pdf"
+                        mime_type = "application/pdf"
+                        content = "Official policy document (PDF). Full PDF preview and document search available."
+                    elif ext == ".md":
+                        file_type = "markdown"
+                        mime_type = "text/markdown"
                         with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                            snippet = f.read(400).strip()
-                        content = f"{snippet}..." if snippet else "Text document."
+                            content = f.read()
                     else:
-                        # Binary (PDF): no preview, just a pointer to the agent.
-                        content = f"Official policy document ({ext.upper()[1:]}). Please use the Pip Assistant to search this document's contents for specific details."
+                        file_type = "text"
+                        mime_type = "text/plain"
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                            content = f.read()
 
                     docs.append({
                         "filename": fname,
                         "title": title,
                         "size_bytes": size_bytes,
                         "content": content,
-                        "category": "HR & Benefits"
+                        "category": "HR & Benefits",
+                        "file_type": file_type,
+                        "mime_type": mime_type,
                     })
                 except Exception as e:
                     current_app.logger.warning(f"Failed to process KB file {fname}: {e}")
 
     return jsonify(docs)
+
+
+@api_bp.get("/knowledge-base/file/<path:filename>")
+@require_auth
+def get_knowledge_base_file(filename):
+    """Serve raw knowledge base files (PDF, Markdown, plain text) with auth."""
+    kb_dir = current_app.config.get("KNOWLEDGE_BASE_DIR") or os.path.join(current_app.root_path, "..", "knowledge_base")
+    kb_dir = os.path.abspath(kb_dir)
+
+    # Sanitize and ensure file is within kb_dir
+    fpath = os.path.abspath(os.path.join(kb_dir, filename))
+    if not fpath.startswith(kb_dir) or not os.path.isfile(fpath):
+        return jsonify({"error": "Document not found"}), 404
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in (".pdf", ".md", ".txt"):
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    mimetypes = {
+        ".pdf": "application/pdf",
+        ".md": "text/markdown; charset=utf-8",
+        ".txt": "text/plain; charset=utf-8",
+    }
+    return send_from_directory(kb_dir, filename, mimetype=mimetypes.get(ext, "application/octet-stream"))
 
 
 # --------------------------------------------------------------------------

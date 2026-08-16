@@ -46,7 +46,7 @@ const PERCENT_BUMP: Record<AgentEvent["type"], number> = {
 
 const TOOL_LABELS: Record<string, string> = {
   search_knowledge: "🔍 Searching audited policy knowledge base...",
-  create_draft: "📝 Generating draft reply for ticket...",
+  list_tickets: "📋 Retrieving active support tickets...",
   escalate: "⚠️ Processing ticket escalation...",
 };
 
