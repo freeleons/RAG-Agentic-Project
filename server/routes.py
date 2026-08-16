@@ -35,6 +35,7 @@ from server.models import Conversation, Message, PendingAction, Run, RunStep, Ti
 from server.observability import record_step
 from server.tools import create_draft as create_draft
 from server.tools.search_knowledge import search_knowledge
+from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.utils import is_client_disconnected
 from server.prompts import (
@@ -345,6 +346,42 @@ def stop_run(run_id):
     return jsonify({"success": True, "status": "stopped", "run_id": run.id})
 
 
+@api_bp.post("/runs/<int:run_id>/confirm")
+@require_auth
+def confirm_run(run_id):
+    """Resume the agent loop after approving/rejecting a consequential tool."""
+    run = _owned_run(run_id)
+    if run is None:
+        return jsonify({"error": "run not found"}), 404
+    if run.status != "needs_confirmation":
+        return jsonify({"error": "run is not awaiting confirmation"}), 409
+
+    data = request.get_json(silent=True) or {}
+    if "approved" not in data:
+        return jsonify({"error": "approved boolean is required"}), 400
+    approved = bool(data["approved"])
+
+    # Keep the pending action so reject can roll back related ticket state
+    action = PendingAction.query.filter_by(run_id=run.id, status="pending").first()
+    outcome = resume_run(run, approved)
+
+    # On reject: if the ticket is still in_triage, reopen it so it is not stuck
+    if not approved and action is not None:
+        raw_id = (action.arguments or {}).get("ticket_id")
+        if raw_id is not None:
+            try:
+                clean_id = int(str(raw_id).replace("T-", "").replace("APX-", ""))
+            except (TypeError, ValueError):
+                clean_id = None
+            if clean_id is not None:
+                ticket = Ticket.query.filter_by(id=clean_id, user_id=g.user.id).first()
+                if ticket is not None and ticket.status == "in_triage":
+                    ticket.status = "open"
+                    db.session.commit()
+
+    return jsonify(outcome)
+
+
 # --------------------------------------------------------------------------
 # Ticket endpoints
 # --------------------------------------------------------------------------
@@ -585,6 +622,11 @@ def update_ticket_endpoint(ticket_id):
         ticket.draft_reply = None
 
     db.session.commit()
+
+    # After resolve, auto-sync into the KB for later RAG retrieval
+    if ticket.status == "resolved":
+        sync_one_resolved_ticket(ticket)
+
     return jsonify(_serialize_ticket(ticket))
 
 

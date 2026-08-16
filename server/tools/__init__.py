@@ -13,6 +13,8 @@ To add a tool: write its handler in a new file in this package, then add one
 entry here — agent.py and llm.py need no changes.
 """
 
+from server.hitl import requires_hitl
+
 # Modules are imported under private aliases so `from server.tools import
 # search_knowledge` (the module) doesn't collide with the handler function
 # of the same name.
@@ -74,9 +76,10 @@ TOOLS = {
             },
         },
     },
+    # Consequential action: require HITL confirmation before running
     "create_draft": {
         "handler": _create_draft_module.create_draft,
-        "requires_confirmation": False,
+        "requires_confirmation": True,
         "description": (
             "Draft and send a reply to a support ticket. Requires user confirmation "
             "before it is sent."
@@ -90,9 +93,10 @@ TOOLS = {
             "required": ["ticket_id", "reply_text"],
         },
     },
+    # Consequential action: require HITL confirmation before running
     "escalate": {
         "handler": _escalate_module.escalate,
-        "requires_confirmation": False,
+        "requires_confirmation": True,
         "description": (
             "Escalate a support ticket to a human queue by priority. Requires user "
             "confirmation."
@@ -113,6 +117,9 @@ TOOLS = {
     },
 }
 
+# Keep registry flags aligned with TOOL_TIERS in server/hitl.py
+for _name, _tool in TOOLS.items():
+    _tool["requires_confirmation"] = requires_hitl(_name)
 
 def openai_tool_defs():
     """Convert TOOLS into the OpenAI 'tools' array shape that generate()

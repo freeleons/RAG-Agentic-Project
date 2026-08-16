@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
+  api,
   fetchRunDetails,
   fetchTickets,
   getCurrentUser,
@@ -263,6 +264,33 @@ export default function App() {
     }
   };
 
+  /** Approve or reject a triage-paused create_draft / escalate action */
+  const handleConfirmPending = async (approved: boolean) => {
+    const runId = latestRun?.run_id || (latestRun as any)?.id;
+    if (!runId) return;
+    try {
+      const outcome = await api.confirmRun(runId, approved);
+      let runObj: any = outcome;
+      try {
+        const details = await fetchRunDetails(runId);
+        runObj = { ...outcome, steps: details.steps, pending_action: (details as any).pending_action };
+      } catch {
+        /* keep outcome */
+      }
+      setLatestRun(runObj);
+
+      // Refresh tickets so draft_pending / escalated state is visible
+      const list = await fetchTickets();
+      setTickets(list);
+      if (selectedTicket) {
+        const refreshed = list.find((t) => t.id === selectedTicket.id) || null;
+        setSelectedTicket(refreshed);
+      }
+    } catch (err: any) {
+      alert(err.message || "Confirmation failed");
+    }
+  };
+
   const handleStopTriage = async (ticketId: number) => {
     triageAbortControllersRef.current[ticketId]?.abort();
     setTriagingTickets((prev) => {
@@ -382,6 +410,8 @@ export default function App() {
               onSendReply={handleSendReply}
               onUpdateResolutionNotes={handleUpdateResolutionNotes}
               triagingTickets={triagingTickets}
+              latestRun={latestRun}
+              onConfirmPending={handleConfirmPending}
             />
           </div>
 

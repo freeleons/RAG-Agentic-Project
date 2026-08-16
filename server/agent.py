@@ -25,11 +25,12 @@ import json
 from flask import current_app
 from sqlalchemy import func
 
+from server.hitl import execute_tool, execute_tool_with_hitl, requires_hitl
 from server.llm import generate
+from server.loop_guard import LoopGuard
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
-from server.tools import TOOLS, openai_tool_defs, validate_arguments
-from server.loop_guard import LoopGuard
+from server.tools import openai_tool_defs, validate_arguments
 from server.utils import is_client_disconnected
 
 # System prompt for the ticket-triage agent persona ("Pip"). Note the last
@@ -223,8 +224,6 @@ def _loop(run, messages, retried):
             continue
         retried = False  # a valid call resets the retry budget
 
-        tool = TOOLS[name]
-
         # Loop fingerprinting: same tool + same args too many times → skip execute, nudge model
         # Complements README bounded-loop guards (MAX_AGENT_STEPS) by stopping repeated identical calls earlier
         if loop_guard.check(name, arguments):
@@ -253,32 +252,25 @@ def _loop(run, messages, retried):
             ]
             continue
 
-        # --- Guardrail: human confirmation for consequential actions ---------
-        # Instead of executing, persist a PendingAction and RETURN out of the
-        # loop entirely. The run sits in 'needs_confirmation' until the user
-        # approves/rejects, at which point resume_run() picks it back up.
-        if tool["requires_confirmation"]:
-            action = PendingAction(run_id=run.id, tool_name=name, arguments=arguments)
-            run.status = "needs_confirmation"
-            db.session.add(action)
-            db.session.commit()
-            return {
-                "run_id": run.id,
-                "status": "needs_confirmation",
-                "pending_action": {"id": action.id, "tool": name, "arguments": arguments},
-            }
-
-        # Cap check before tool_call to prevent exceeding MAX_AGENT_STEPS
+        # Cap check before tool execution / HITL pause
         if _next_seq(run) > max_steps:
             return _finish(run, "failed", "I ran out of steps before finishing this task.")
 
+        # Tool-execution HITL wrapper: tier 2+ pauses for Approve/Reject; tier 1 runs below
+        if requires_hitl(name):
+            outcome = execute_tool_with_hitl(name, arguments, run=run)
+            return {
+                "run_id": run.id,
+                "status": "needs_confirmation",
+                "pending_action": outcome.pending_action,
+            }
+
         # --- Step 2: execute the tool ----------------------------------------
-        # (lambda defaults again freeze this iteration's tool + args.)
         result = record_step(
             run.id,
             _next_seq(run),
             "tool_call",
-            lambda t=tool, a=arguments: t["handler"](**a),
+            lambda n=name, a=arguments: execute_tool(n, a),
             tool_name=name,
             arguments=arguments,
         )
@@ -297,6 +289,8 @@ def resume_run(run, approved):
     `approved`, then re-enters the normal loop.
     """
     action = PendingAction.query.filter_by(run_id=run.id, status="pending").first()
+    if action is None:
+        return {"run_id": run.id, "status": "failed", "error": "No pending action found to confirm"}
     action.status = "approved" if approved else "rejected"
     action.resolved_at = utcnow()
 
@@ -314,13 +308,12 @@ def resume_run(run, approved):
     db.session.commit()
 
     if approved:
-        # User said yes: actually execute the held-back tool now.
-        tool = TOOLS[action.tool_name]
+        # Already approved — execute without re-entering the HITL gate
         result = record_step(
             run.id,
             _next_seq(run),
             "tool_call",
-            lambda t=tool, a=action.arguments: t["handler"](**a),
+            lambda a=action.arguments, n=action.tool_name: execute_tool(n, a),
             tool_name=action.tool_name,
             arguments=action.arguments,
         )

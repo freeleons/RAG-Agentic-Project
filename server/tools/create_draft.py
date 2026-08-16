@@ -15,9 +15,9 @@ _counter = itertools.count(1)
 
 
 def create_draft(ticket_id, reply_text):
-    """'Send' a draft reply for a ticket. Updates the database record dynamically."""
+    """Write draft_reply and set status to draft_pending (awaits staff review)."""
     try:
-        # Import dynamically to avoid circular dependencies
+        # Dynamic import to avoid circular dependencies
         # (models -> ... -> tools -> models).
         from server.models import db, Ticket
 
@@ -25,7 +25,7 @@ def create_draft(ticket_id, reply_text):
         # database id either way.
         clean_id = int(str(ticket_id).replace("T-", "").replace("APX-", ""))
 
-        ticket = Ticket.query.get(clean_id)
+        ticket = db.session.get(Ticket, clean_id)
         if ticket:
             ticket.draft_reply = reply_text
             ticket.status = "draft_pending"  # awaiting human review in the UI

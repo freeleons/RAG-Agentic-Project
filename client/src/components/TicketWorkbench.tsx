@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Ticket } from "../types";
+import { AgentRun, Ticket } from "../types";
 
 interface TicketWorkbenchProps {
   ticket: Ticket | null;
@@ -9,6 +9,10 @@ interface TicketWorkbenchProps {
   onSendReply: (ticketId: number, replyText: string) => void;
   onUpdateResolutionNotes: (ticketId: number, notes: string) => void;
   triagingTickets: Record<number, { isProcessing: boolean; runId?: number; statusText?: string }>;
+  /** Latest triage run; includes pending_action when HITL confirmation is required */
+  latestRun?: AgentRun | null;
+  /** Approve or reject a consequential tool (create_draft / escalate) */
+  onConfirmPending?: (approved: boolean) => void;
 }
 
 export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
@@ -19,6 +23,8 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   onSendReply,
   onUpdateResolutionNotes,
   triagingTickets,
+  latestRun = null,
+  onConfirmPending,
 }) => {
   const [replyInput, setReplyInput] = useState("");
   // Persistent reply state memory map indexed by ticket ID
@@ -299,6 +305,60 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
             <div ref={ticketChatEndRef} />
           </div>
         </div>
+
+        {/* HITL: consequential tool awaiting staff approval */}
+        {latestRun?.status === "needs_confirmation" && latestRun.pending_action && onConfirmPending && (
+          <div className="w-full p-3 rounded-2xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                Pending action: {latestRun.pending_action.tool}
+              </p>
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-bold">
+                Requires Approval
+              </span>
+            </div>
+
+            {latestRun.pending_action.tool === "create_draft" && latestRun.pending_action.arguments?.reply_text ? (
+              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-amber-300/60 dark:border-amber-800/60 space-y-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Proposed Reply Draft:</span>
+                <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+                  {String(latestRun.pending_action.arguments.reply_text)}
+                </p>
+              </div>
+            ) : latestRun.pending_action.tool === "escalate" ? (
+              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-amber-300/60 dark:border-amber-800/60 space-y-1 text-xs">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Escalation Details:</span>
+                <p className="text-slate-800 dark:text-slate-200">
+                  <span className="font-semibold">Priority:</span> {String(latestRun.pending_action.arguments?.priority ?? "")}
+                </p>
+                <p className="text-slate-800 dark:text-slate-200">
+                  <span className="font-semibold">Reason:</span> {String(latestRun.pending_action.arguments?.reason ?? "")}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-amber-900/80 dark:text-amber-200/80 font-mono whitespace-pre-wrap break-words">
+                {JSON.stringify(latestRun.pending_action.arguments, null, 2)}
+              </p>
+            )}
+
+            <div className="flex space-x-2 pt-1">
+              <button
+                type="button"
+                onClick={() => onConfirmPending(true)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-colors shadow-sm"
+              >
+                Approve & Execute
+              </button>
+              <button
+                type="button"
+                onClick={() => onConfirmPending(false)}
+                className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 text-xs font-bold cursor-pointer transition-colors"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Bottom Phone Chat Reply Box & Sleek Action Bar */}
         <div className="w-full pt-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 rounded-2xl shadow-md space-y-3 flex flex-col">
