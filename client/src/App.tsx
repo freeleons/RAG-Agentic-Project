@@ -142,8 +142,13 @@ export default function App() {
     try {
       const data = await fetchTickets();
       setTickets(data);
-      if (data.length > 0 && !selectedTicket) {
-        setSelectedTicket(data[0]);
+      if (data.length > 0) {
+        if (!selectedTicket) {
+          setSelectedTicket(data[0]);
+        } else {
+          const fresh = data.find((t) => t.id === selectedTicket.id);
+          if (fresh) setSelectedTicket(fresh);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -436,6 +441,7 @@ export default function App() {
               pendingDraftQuery={pendingDraftQuery}
               onClearPendingDraftQuery={() => setPendingDraftQuery(null)}
               onBotThinkingChange={setIsPipThinking}
+              onTicketUpdated={loadTickets}
             />
           </div>
         </div>

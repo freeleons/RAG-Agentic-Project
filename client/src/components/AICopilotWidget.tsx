@@ -17,6 +17,20 @@ interface AICopilotWidgetProps {
   onBotThinkingChange?: (isThinking: boolean) => void;
   pendingDraftQuery?: string | null;
   onClearPendingDraftQuery?: () => void;
+  onTicketUpdated?: () => void;
+}
+
+export interface EscalationPendingAction {
+  id: number;
+  tool: string;
+  arguments: {
+    ticket_id?: string;
+    priority?: string;
+    reason?: string;
+    [key: string]: any;
+  };
+  runId: number;
+  resolved?: "approved" | "rejected";
 }
 
 interface ChatMessage {
@@ -25,6 +39,7 @@ interface ChatMessage {
   text: string;
   timestamp: string;
   tools?: ToolActivity[];
+  pendingAction?: EscalationPendingAction;
 }
 
 export const CopyButton: React.FC<{ text: string }> = ({ text }) => {
@@ -96,6 +111,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   onBotThinkingChange,
   pendingDraftQuery,
   onClearPendingDraftQuery,
+  onTicketUpdated,
 }) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -108,6 +124,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   const [inputMessage, setInputMessage] = useState("");
   const [isBotThinking, setIsBotThinking] = useState(false);
   const [isBotTalking, setIsBotTalking] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
   const [runSteps, setRunSteps] = useState<TraceStep[]>([]);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -222,6 +239,66 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
   const status = getPipStatus();
 
+  const handleConfirmPendingEscalation = async (
+    msgId: string,
+    runId: number,
+    approved: boolean
+  ) => {
+    setIsConfirming(true);
+    try {
+      const token = localStorage.getItem("apexcare_token");
+      const res = await fetch(`/api/runs/${runId}/confirm`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ approved }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+
+        // Mark this pending action as resolved
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId && m.pendingAction
+              ? {
+                  ...m,
+                  pendingAction: {
+                    ...m.pendingAction,
+                    resolved: approved ? "approved" : "rejected",
+                  },
+                }
+              : m
+          )
+        );
+
+        // Flash avatar status
+        setStatusOverride(approved ? "completed" : null);
+        if (approved) setTimeout(() => setStatusOverride(null), 2500);
+
+        // Append follow-up response if available
+        if (data.answer) {
+          const followUpMsg: ChatMessage = {
+            id: (Date.now() + 2).toString(),
+            sender: "pip",
+            text: data.answer,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+          setChatMessages((prev) => [...prev, followUpMsg]);
+        }
+
+        // Notify parent to refresh ticket list & active ticket in real time
+        onTicketUpdated?.();
+      }
+    } catch (err) {
+      console.error("Failed to confirm pending escalation:", err);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
   const handleSendChatMessage = async (queryText?: string) => {
     const textToSend = queryText || inputMessage;
     if (!textToSend.trim()) return;
@@ -278,15 +355,27 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
       let answerText = "";
       let completedRunId: number | null = null;
+      let pendingActionData: EscalationPendingAction | undefined = undefined;
+
       if (res.ok) {
         const data = await res.json();
         answerText = data.reply;
         completedRunId = data.run_id;
         setActiveRunId(data.run_id);
 
-        // Flash "completed" state with celebration stars briefly upon success!
-        setStatusOverride("completed");
-        setTimeout(() => setStatusOverride(null), 2500);
+        if (data.status === "needs_confirmation" && data.pending_action) {
+          pendingActionData = {
+            id: data.pending_action.id,
+            tool: data.pending_action.tool,
+            arguments: data.pending_action.arguments || {},
+            runId: data.run_id,
+          };
+          setStatusOverride(null);
+        } else {
+          // Flash "completed" state with celebration stars briefly upon success!
+          setStatusOverride("completed");
+          setTimeout(() => setStatusOverride(null), 2500);
+        }
       } else {
         throw new Error("API call failed");
       }
@@ -299,6 +388,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         text: answerText,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         tools,
+        pendingAction: pendingActionData,
       };
 
       setChatMessages((prev) => [...prev, botMsg]);
@@ -441,6 +531,86 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                   >
                     <p className="whitespace-pre-wrap">{msg.text}</p>
                     {msg.sender === "pip" && msg.tools && <AgentToolTrace tools={msg.tools} />}
+
+                    {/* HITL Escalation Approval Card (Strictly Ticket ID, Priority, Reason — No draft text) */}
+                    {msg.pendingAction && msg.pendingAction.tool === "escalate" && (
+                      <div className="mt-3 p-3 rounded-xl border border-amber-400/60 bg-amber-50/90 dark:bg-amber-950/40 space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                            <span>⚡</span>
+                            <span>Escalation Requires Approval</span>
+                          </span>
+                          <span className="text-[9px] uppercase font-mono px-2 py-0.5 rounded-full bg-amber-200/90 dark:bg-amber-900/80 text-amber-950 dark:text-amber-200 font-bold">
+                            HITL Gate
+                          </span>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-amber-200/80 dark:border-amber-900/60 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">Ticket:</span>
+                            <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                              {msg.pendingAction.arguments.ticket_id}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">Priority:</span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                msg.pendingAction.arguments.priority === "urgent"
+                                  ? "bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+                                  : msg.pendingAction.arguments.priority === "high"
+                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                                  : "bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-300 dark:border-blue-800"
+                              }`}
+                            >
+                              {msg.pendingAction.arguments.priority || "high"}
+                            </span>
+                          </div>
+                          <div className="pt-1.5 border-t border-slate-200/60 dark:border-slate-800">
+                            <span className="font-bold text-slate-700 dark:text-slate-300 block mb-0.5">Reason:</span>
+                            <p className="text-slate-600 dark:text-slate-300 italic font-medium">
+                              {msg.pendingAction.arguments.reason}
+                            </p>
+                          </div>
+                        </div>
+
+                        {!msg.pendingAction.resolved ? (
+                          <div className="flex items-center space-x-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleConfirmPendingEscalation(msg.id, msg.pendingAction!.runId, true)
+                              }
+                              disabled={isConfirming}
+                              className="flex-1 py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs transition cursor-pointer shadow-xs text-center disabled:opacity-50"
+                            >
+                              {isConfirming ? "Processing..." : "✓ Approve & Escalate"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleConfirmPendingEscalation(msg.id, msg.pendingAction!.runId, false)
+                              }
+                              disabled={isConfirming}
+                              className="py-1.5 px-3 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : msg.pendingAction.resolved === "approved" ? (
+                          <div className="flex items-center space-x-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100/80 dark:bg-emerald-950/60 p-2 rounded-lg border border-emerald-300 dark:border-emerald-800">
+                            <span>✓</span>
+                            <span>Escalation Approved & Executed (Ticket marked escalated)</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-400 bg-slate-200/80 dark:bg-slate-800 p-2 rounded-lg border border-slate-300 dark:border-slate-700">
+                            <span>✕</span>
+                            <span>Escalation Rejected by Staff</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200/50 dark:border-slate-700/50 text-[9px]">
                       {msg.sender === "pip" ? (
                         <CopyButton text={msg.text} />

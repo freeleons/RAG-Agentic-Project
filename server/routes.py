@@ -30,9 +30,11 @@ from sqlalchemy import func
 
 from server.agent import resume_run, run_agent
 from server.auth import require_auth
+from server.hitl import execute_tool_with_hitl
 from server.llm import generate
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
+from server.tools import openai_tool_defs, validate_arguments
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
@@ -984,18 +986,20 @@ def pip_chat():
         current_app.logger.info("Chat generation aborted: run status set to stopped.")
         return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
-    # Step 2 (seq 3): compose the actual reply.
+    # Step 2 (seq 3): compose the actual reply (with escalate tool available).
     step3 = RunStep(
         run_id=run.id,
         seq=3,
         kind="llm_call",
+        llm_messages=messages,
         result={"status": "formulating"}
     )
     db.session.add(step3)
     db.session.commit()
 
     try:
-        res = generate(messages, tools=[])
+        chat_tools = [t for t in openai_tool_defs() if t["function"]["name"] == "escalate"]
+        res = generate(messages, tools=chat_tools)
 
         # ...and re-check after generation, before committing/returning
         # (generation takes seconds; the user may have stopped meanwhile).
@@ -1010,13 +1014,35 @@ def pip_chat():
             current_app.logger.info("Chat generation aborted: run status set to stopped.")
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
+        if res.get("type") == "tool_call" and res.get("name") == "escalate":
+            tool_args = res.get("arguments") or {}
+            problem = validate_arguments("escalate", tool_args)
+            if problem is None:
+                outcome = execute_tool_with_hitl("escalate", tool_args, run=run)
+                step3.result = res
+                db.session.commit()
+                ticket_num = tool_args.get("ticket_id", "")
+                priority_val = str(tool_args.get("priority", "high")).upper()
+                reason_val = tool_args.get("reason", "")
+                reply_msg = (
+                    f"I recommend escalating Ticket {ticket_num} with **{priority_val}** priority.\n"
+                    f"**Reason:** {reason_val}\n\n"
+                    "Please review and approve the escalation below."
+                )
+                return jsonify({
+                    "reply": reply_msg,
+                    "status": "needs_confirmation",
+                    "run_id": run.id,
+                    "pending_action": outcome.pending_action,
+                })
+
         content = res.get("content") or "I'm ready to assist you. Which ticket or policy question shall we tackle next?"
 
         step3.result = {"content": content}
         run.status = "completed"
         db.session.commit()
 
-        return jsonify({"reply": content, "run_id": run.id})
+        return jsonify({"reply": content, "status": "completed", "run_id": run.id})
     except Exception as e:
         # The generate() call itself failed. A stop/disconnect racing with the
         # failure still wins and reports "stopped" rather than an error.

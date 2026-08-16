@@ -57,3 +57,57 @@ test("draft with pip inputs message into pip chat and renders response with copy
   const copyButtons = screen.getAllByRole("button", { name: /copy reply/i });
   expect(copyButtons.length).toBeGreaterThanOrEqual(2);
 });
+
+test("pip chat renders HITL escalation alert with no draft text and handles approval", async () => {
+  let confirmCalledWith: any = null;
+  renderAuthed({
+    "POST /api/chat": () =>
+      jsonResponse({
+        reply: "I recommend escalating Ticket APX-101 with URGENT priority.",
+        status: "needs_confirmation",
+        run_id: 88,
+        pending_action: {
+          id: 5,
+          tool: "escalate",
+          arguments: {
+            ticket_id: "APX-101",
+            priority: "urgent",
+            reason: "Critical database connection failure affecting company operations.",
+          },
+        },
+      }),
+    "GET /api/runs/88": () => jsonResponse({ run: { id: 88, status: "needs_confirmation" }, steps: [] }),
+    "GET /api/runs?page=1&per_page=1": () => jsonResponse({ runs: [] }),
+    "POST /api/runs/88/confirm": (req) => {
+      confirmCalledWith = req;
+      return jsonResponse({
+        run_id: 88,
+        status: "completed",
+        answer: "Ticket APX-101 has been successfully escalated to the Urgent IT Queue.",
+      });
+    },
+  });
+
+  expect(await screen.findByText(/I'm Pip, your ApexCare/i)).toBeInTheDocument();
+
+  const textarea = screen.getByPlaceholderText(/Ask Pip any policy question/i);
+  await userEvent.type(textarea, "Escalate ticket APX-101 due to database outage");
+  await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+  // Verify HITL escalation card is visible
+  expect(await screen.findByText(/Escalation Requires Approval/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Critical database connection failure affecting company operations/i)).toBeInTheDocument();
+  expect(screen.getByText("APX-101")).toBeInTheDocument();
+  expect(screen.getByText("urgent")).toBeInTheDocument();
+
+  // Verify there is NO draft text input or draft action displayed
+  expect(screen.queryByText(/draft_reply/i)).not.toBeInTheDocument();
+
+  // Approve the escalation
+  const approveBtn = screen.getByRole("button", { name: /approve & escalate/i });
+  await userEvent.click(approveBtn);
+
+  // Verify approval post and follow up message
+  expect(await screen.findByText(/Escalation Approved & Executed/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Ticket APX-101 has been successfully escalated/i)).toBeInTheDocument();
+});

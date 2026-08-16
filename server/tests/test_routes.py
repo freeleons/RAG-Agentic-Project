@@ -135,3 +135,59 @@ def test_pip_chat_routes(client, auth_headers, monkeypatch):
     system_msg = mock_called[1][0][0]
     assert "You are Pip" in system_msg["content"]
     assert "The knowledge base search found no matching policy." in system_msg["content"]
+
+
+def test_pip_chat_triggers_escalation_hitl(client, auth_headers, monkeypatch):
+    """POST /api/chat should pause with needs_confirmation when Pip decides to escalate."""
+    from server.models import Ticket, db
+
+    ticket = Ticket.query.first()
+    assert ticket is not None
+
+    def mock_generate(messages, tools):
+        if len(messages) == 1 and "routing assistant" in messages[0]["content"]:
+            return {"type": "final", "content": "YES"}
+        return {
+            "type": "tool_call",
+            "name": "escalate",
+            "arguments": {
+                "ticket_id": f"APX-{ticket.id}",
+                "priority": "urgent",
+                "reason": "Widespread system outage affecting payroll.",
+            },
+            "call_id": "call_123",
+        }
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr("server.routes.search_knowledge", lambda q: {"answer": "NO_POLICY_MATCH"})
+
+    resp = client.post("/api/chat", json={"message": f"Escalate ticket {ticket.id}"}, headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "needs_confirmation"
+    assert data["pending_action"]["tool"] == "escalate"
+    assert data["pending_action"]["arguments"]["priority"] == "urgent"
+    assert "payroll" in data["pending_action"]["arguments"]["reason"]
+
+    run_id = data["run_id"]
+
+    # Now approve the pending escalation
+    def mock_resume_generate(messages, tools):
+        return {"type": "final", "content": "Ticket has been escalated to Urgent queue."}
+
+    monkeypatch.setattr("server.agent.generate", mock_resume_generate)
+
+    confirm_res = client.post(
+        f"/api/runs/{run_id}/confirm",
+        headers=auth_headers,
+        json={"approved": True},
+    )
+    assert confirm_res.status_code == 200
+    confirm_data = confirm_res.get_json()
+    assert confirm_data["status"] == "completed"
+
+    db.session.refresh(ticket)
+    assert ticket.status == "escalated"
+    assert ticket.priority == "urgent"
+    assert "payroll" in ticket.escalation_reason
+
