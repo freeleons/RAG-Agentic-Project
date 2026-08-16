@@ -19,8 +19,6 @@ from server.hitl import requires_hitl
 # search_knowledge` (the module) doesn't collide with the handler function
 # of the same name.
 from server.tools import search_knowledge as _search_knowledge_module
-from server.tools import create_draft as _create_draft_module
-from server.tools import escalate as _escalate_module
 from server.tools import ticket_tools as _ticket_tools_module
 
 TOOLS = {
@@ -74,45 +72,6 @@ TOOLS = {
                     "description": "Optional search term for title or description.",
                 },
             },
-        },
-    },
-    # Consequential action: require HITL confirmation before running
-    "create_draft": {
-        "handler": _create_draft_module.create_draft,
-        "requires_confirmation": True,
-        "description": (
-            "Draft and send a reply to a support ticket. Requires user confirmation "
-            "before it is sent."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "ticket_id": {"type": "string", "description": "The ticket to reply to."},
-                "reply_text": {"type": "string", "description": "The full reply text."},
-            },
-            "required": ["ticket_id", "reply_text"],
-        },
-    },
-    # Consequential action: require HITL confirmation before running
-    "escalate": {
-        "handler": _escalate_module.escalate,
-        "requires_confirmation": True,
-        "description": (
-            "Escalate a support ticket to a human queue by priority. Requires user "
-            "confirmation."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "ticket_id": {"type": "string", "description": "The ticket to escalate."},
-                "priority": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high", "urgent"],
-                    "description": "Escalation priority.",
-                },
-                "reason": {"type": "string", "description": "Why this needs escalation."},
-            },
-            "required": ["ticket_id", "priority", "reason"],
         },
     },
 }

@@ -14,6 +14,9 @@ def app():
             "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
             "SECRET_KEY": "test-secret",
             "JWT_EXPIRY_HOURS": 24,
+            "AGENT_API_BASE_URL": "",
+            "AGENT_API_KEY": "",
+            "OLLAMA_BASE_URL": "http://localhost:11434",
         }
     )
     with app.app_context():

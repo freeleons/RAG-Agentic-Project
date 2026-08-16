@@ -65,8 +65,11 @@ def generate(messages, tools, max_retries=3, timeout=120):
             break  # success — leave the retry loop
         except (requests.exceptions.Timeout, requests.exceptions.RequestException) as exc:
             last_exception = exc
+            err_detail = ""
+            if hasattr(exc, "response") and exc.response is not None:
+                err_detail = f" [HTTP {exc.response.status_code}: {exc.response.text}]"
             current_app.logger.warning(
-                f"LLM request attempt {attempt}/{max_retries} failed ({type(exc).__name__}). "
+                f"LLM request attempt {attempt}/{max_retries} failed ({type(exc).__name__}){err_detail}. "
                 f"Retrying in {attempt * 2}s..."
             )
             if attempt < max_retries:
@@ -136,7 +139,6 @@ def generate(messages, tools, max_retries=3, timeout=120):
                         "search_knowledge",
                         "list_tickets",
                         "update_ticket",
-                        "create_draft",
                         "escalate",
                     ]:
                         args = (
