@@ -31,7 +31,7 @@ from server.loop_guard import LoopGuard
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
 from server.tools import openai_tool_defs, validate_arguments
-from server.utils import is_client_disconnected
+from server.utils import clean_draft_text, is_client_disconnected
 
 # System prompt for the ticket-triage agent persona ("Pip"). Note the last
 # constraint: tool results are wrapped in <tool_result> tags and the model is
@@ -198,7 +198,8 @@ def _loop(run, messages, retried):
             )
         if decision["type"] == "final":
             # Plain-text answer -> the run is complete.
-            return _finish(run, "completed", decision["content"])
+            cleaned_text = clean_draft_text(decision["content"])
+            return _finish(run, "completed", cleaned_text or decision["content"])
 
         # Otherwise the model requested a tool call.
         name = decision["name"]
