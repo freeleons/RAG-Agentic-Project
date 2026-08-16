@@ -26,7 +26,7 @@ import json
 import os
 import re
 from datetime import date
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request, send_from_directory
 from sqlalchemy import func
 
 from server.agent import resume_run, run_agent
@@ -843,26 +843,58 @@ def get_knowledge_base_articles():
                     title = base_name.replace("_", " ").replace("-", " ").title()
 
                     ext = os.path.splitext(fname)[1].lower()
-                    if ext in (".md", ".txt"):
-                        # Text files get a real content preview (first 400 chars).
+                    if ext == ".pdf":
+                        file_type = "pdf"
+                        mime_type = "application/pdf"
+                        content = "Official policy document (PDF). Full PDF preview and document search available."
+                    elif ext == ".md":
+                        file_type = "markdown"
+                        mime_type = "text/markdown"
                         with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                            snippet = f.read(400).strip()
-                        content = f"{snippet}..." if snippet else "Text document."
+                            content = f.read()
                     else:
-                        # Binary (PDF): no preview, just a pointer to the agent.
-                        content = f"Official policy document ({ext.upper()[1:]}). Please use the Pip Assistant to search this document's contents for specific details."
+                        file_type = "text"
+                        mime_type = "text/plain"
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                            content = f.read()
 
                     docs.append({
                         "filename": fname,
                         "title": title,
                         "size_bytes": size_bytes,
                         "content": content,
-                        "category": "HR & Benefits"
+                        "category": "HR & Benefits",
+                        "file_type": file_type,
+                        "mime_type": mime_type,
                     })
                 except Exception as e:
                     current_app.logger.warning(f"Failed to process KB file {fname}: {e}")
 
     return jsonify(docs)
+
+
+@api_bp.get("/knowledge-base/file/<path:filename>")
+@require_auth
+def get_knowledge_base_file(filename):
+    """Serve raw knowledge base files (PDF, Markdown, plain text) with auth."""
+    kb_dir = current_app.config.get("KNOWLEDGE_BASE_DIR") or os.path.join(current_app.root_path, "..", "knowledge_base")
+    kb_dir = os.path.abspath(kb_dir)
+
+    # Sanitize and ensure file is within kb_dir
+    fpath = os.path.abspath(os.path.join(kb_dir, filename))
+    if not fpath.startswith(kb_dir) or not os.path.isfile(fpath):
+        return jsonify({"error": "Document not found"}), 404
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in (".pdf", ".md", ".txt"):
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    mimetypes = {
+        ".pdf": "application/pdf",
+        ".md": "text/markdown; charset=utf-8",
+        ".txt": "text/plain; charset=utf-8",
+    }
+    return send_from_directory(kb_dir, filename, mimetype=mimetypes.get(ext, "application/octet-stream"))
 
 
 # --------------------------------------------------------------------------
