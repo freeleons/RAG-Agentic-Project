@@ -1,5 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
-import { AgentRun, Ticket, UserProfile } from "../types";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { AgentRun, Ticket, TraceStep, UserProfile } from "../types";
+import {
+  AgentProgressPanel,
+  AgentToolTrace,
+  ToolActivity,
+  deriveAgentProgress,
+} from "./AgentProgress";
 import { PipAvatar, PipStatusState } from "./PipAvatar";
 
 interface AICopilotWidgetProps {
@@ -15,30 +21,8 @@ interface ChatMessage {
   sender: "user" | "pip" | "system";
   text: string;
   timestamp: string;
+  tools?: ToolActivity[];
 }
-
-const mapRunStepToStatus = (latestStep?: { kind: string; tool_name?: string }): string => {
-  if (!latestStep) return "🧠 Analyzing request...";
-
-  if (latestStep.kind === "tool_call") {
-    switch (latestStep.tool_name) {
-      case "search_knowledge":
-        return "🔍 Searching audited policy knowledge base...";
-      case "create_draft":
-        return "📝 Generating draft reply for ticket...";
-      case "escalate":
-        return "⚠️ Processing ticket escalation...";
-      default:
-        return `🛠️ Executing tool: ${latestStep.tool_name}...`;
-    }
-  }
-
-  if (latestStep.kind === "llm_call") {
-    return "✍️ Formulating policy-grounded response...";
-  }
-
-  return "⚡ Processing agent workflow...";
-};
 
 export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   user,
@@ -56,7 +40,8 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   const [isBotThinking, setIsBotThinking] = useState(false);
   const [isBotTalking, setIsBotTalking] = useState(false);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
-  const [currentStatusText, setCurrentStatusText] = useState<string>("🧠 Analyzing request...");
+  const [runSteps, setRunSteps] = useState<TraceStep[]>([]);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   // Transient status override for terminal states ("completed" | "stopped" | "error")
   const [statusOverride, setStatusOverride] = useState<PipStatusState | null>(null);
@@ -96,10 +81,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   }, [chatMessages, isBotThinking, isBotTalking]);
 
   useEffect(() => {
-    if (!isBotThinking || !activeRunId) {
-      setCurrentStatusText("🧠 Analyzing request...");
-      return;
-    }
+    if (!isBotThinking || !activeRunId) return;
 
     const pollInterval = setInterval(async () => {
       try {
@@ -109,9 +91,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         });
         if (res.ok) {
           const data = await res.json();
-          const steps = data.steps || [];
-          const latestStep = steps[steps.length - 1];
-          setCurrentStatusText(mapRunStepToStatus(latestStep));
+          setRunSteps(data.steps || []);
         }
       } catch (err) {
         // Ignore transient polling errors
@@ -120,6 +100,35 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
     return () => clearInterval(pollInterval);
   }, [isBotThinking, activeRunId]);
+
+  // Heartbeat so the panel keeps moving between persisted steps
+  useEffect(() => {
+    if (!isBotThinking) return;
+
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    const ticker = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => clearInterval(ticker);
+  }, [isBotThinking]);
+
+  const liveProgress = useMemo(() => deriveAgentProgress(runSteps), [runSteps]);
+
+  const fetchRunTools = async (runId: number): Promise<ToolActivity[]> => {
+    try {
+      const token = localStorage.getItem("apexcare_token");
+      const res = await fetch(`/api/runs/${runId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return liveProgress.tools;
+      const data = await res.json();
+      return deriveAgentProgress(data.steps || [], data.status).tools;
+    } catch (err) {
+      return liveProgress.tools;
+    }
+  };
 
   // Dynamic status mapping for Pip Avatar
   const getPipStatus = (): PipStatusState => {
@@ -148,6 +157,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     if (!queryText) setInputMessage("");
     setIsBotThinking(true);
     setStatusOverride(null);
+    setRunSteps([]);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -162,7 +172,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           const data = await res.json();
           if (data.runs && data.runs.length > 0) {
             const latest = data.runs[0];
-            if (latest.status === "running") {
+            if (latest.status === "running" && !controller.signal.aborted) {
               setActiveRunId(latest.id);
             }
           }
@@ -185,9 +195,11 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       });
 
       let answerText = "";
+      let completedRunId: number | null = null;
       if (res.ok) {
         const data = await res.json();
         answerText = data.reply;
+        completedRunId = data.run_id;
         setActiveRunId(data.run_id);
 
         // Flash "completed" state with celebration stars briefly upon success!
@@ -197,11 +209,14 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         throw new Error("API call failed");
       }
 
+      const tools = completedRunId ? await fetchRunTools(completedRunId) : [];
+
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         sender: "pip",
         text: answerText,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        tools,
       };
 
       setChatMessages((prev) => [...prev, botMsg]);
@@ -343,6 +358,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                       }`}
                   >
                     <p>{msg.text}</p>
+                    {msg.sender === "pip" && msg.tools && <AgentToolTrace tools={msg.tools} />}
                     <span className="text-[9px] opacity-70 block text-right mt-1 font-mono">
                       {msg.timestamp}
                     </span>
@@ -352,9 +368,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
             })}
 
             {isBotThinking && (
-              <div className="flex space-x-2 items-center text-xs text-blue-600 dark:text-blue-400 font-semibold p-2 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-800 animate-pulse font-mono">
-                <span>{currentStatusText}</span>
-              </div>
+              <AgentProgressPanel progress={liveProgress} elapsedSeconds={elapsedSeconds} />
             )}
             <div ref={chatEndRef} />
           </div>
