@@ -47,7 +47,6 @@ TRIAGE_USER_PROMPT = (
     "Subject: {title}\n"
     "Issue Description: {description}\n\n"
     "Please execute search_knowledge to find relevant ApexCare policy documents. "
-    "Then generate a draft reply using create_draft with ticket_id={ticket_id}. "
     "If no relevant policy exists or if priority is urgent/high with an outage or safety issue, call escalate."
 )
 
@@ -73,7 +72,7 @@ PIP_SYSTEM_PROMPT = (
     "2. HELPFUL & SUPPORTIVE: Your main goal is to be incredibly helpful. Always seek to support the user in any way you can.\n"
     "3. PLAYFUL YET PROFESSIONAL: You are playful and love to have fun! If the user asks general, off-topic, or playful questions (like 'how is the weather' or 'tell me a joke'), answer them in a playful, witty, and fun way, but keep your response professional and clean.\n"
     "4. REDIRECT TO TASK: You must always end your reply by smoothly steering the conversation back to the task at hand (e.g. searching company policies or looking up support tickets).\n"
-    "5. NO JSON OR FUNCTION CALLS: You are in a direct conversational chat widget with NO tool execution capabilities in this chat session. You MUST NEVER output JSON function calls, tool names, or code blocks for functions like `search_knowledge`, `create_draft`, or `escalate`. Never say things like 'I need to execute functions'. Always reply in direct, natural, conversational plain text.\n\n"
+    "5. NO JSON OR FUNCTION CALLS: You are in a direct conversational chat widget with NO tool execution capabilities in this chat session. You MUST NEVER output JSON function calls, tool names, or code blocks for functions like `search_knowledge` or `escalate`. Never say things like 'I need to execute functions'. Always reply in direct, natural, conversational plain text.\n\n"
     "TICKET LOOKUP & REFERENCE RULES:\n"
     "1. You have full visibility into all active tickets in CURRENT_ACTIVE_TICKETS below.\n"
     "2. NAME LOOKUP & DISAMBIGUATION:\n"

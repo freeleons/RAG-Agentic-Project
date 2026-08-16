@@ -30,8 +30,8 @@ export const mapBackendStepToText = (steps: Array<{ kind: string; tool_name?: st
     switch (latest.tool_name) {
       case "search_knowledge":
         return "🔍 Searching audited policy knowledge base...";
-      case "create_draft":
-        return "✍️ Formulating policy-grounded draft response...";
+      case "list_tickets":
+        return "📋 Retrieving active support tickets...";
       case "escalate":
         return "⚠️ Processing ticket escalation...";
       default:
@@ -58,6 +58,8 @@ export default function App() {
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [auditResetKey, setAuditResetKey] = useState<number>(0);
+  const [pendingDraftQuery, setPendingDraftQuery] = useState<string | null>(null);
+  const [isPipThinking, setIsPipThinking] = useState<boolean>(false);
 
   // Per-ticket triage processing state map
   interface TicketTriageState {
@@ -186,6 +188,11 @@ export default function App() {
     }
   };
 
+  const handleDraftWithPip = (ticket: Ticket) => {
+    const draftMsg = `Help me write a draft reply to ${ticket.requester_name} for ticket #${ticket.ticket_number || ticket.id} (${ticket.title}):\n\n"${ticket.description}"`;
+    setPendingDraftQuery(draftMsg);
+  };
+
   const handleRunTriage = async (ticket: Ticket) => {
     setLatestRun(null);
     setTriagingTickets((prev) => ({
@@ -264,7 +271,7 @@ export default function App() {
     }
   };
 
-  /** Approve or reject a triage-paused create_draft / escalate action */
+  /** Approve or reject a triage-paused escalate action */
   const handleConfirmPending = async (approved: boolean) => {
     const runId = latestRun?.run_id || (latestRun as any)?.id;
     if (!runId) return;
@@ -404,6 +411,8 @@ export default function App() {
             <TicketWorkbench
               key={auditResetKey}
               ticket={selectedTicket || (tickets.length > 0 ? tickets[0] : null)}
+              onDraftWithPip={handleDraftWithPip}
+              isPipProcessing={isPipThinking}
               onRunTriage={handleRunTriage}
               onStopTriage={handleStopTriage}
               onUpdateTicketStatus={handleUpdateTicketStatus}
@@ -424,6 +433,9 @@ export default function App() {
               tickets={tickets}
               latestRun={latestRun}
               isProcessing={selectedTicket ? Boolean(triagingTickets[selectedTicket.id]?.isProcessing) : false}
+              pendingDraftQuery={pendingDraftQuery}
+              onClearPendingDraftQuery={() => setPendingDraftQuery(null)}
+              onBotThinkingChange={setIsPipThinking}
             />
           </div>
         </div>

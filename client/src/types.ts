@@ -201,4 +201,7 @@ export interface KnowledgeDocument {
   category: string;
   size_bytes: number;
   content: string;
+  file_type?: "pdf" | "markdown" | "text";
+  mime_type?: string;
 }
+
