@@ -122,11 +122,11 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       const res = await fetch(`/api/runs/${runId}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) return [];
+      if (!res.ok) return liveProgress.tools;
       const data = await res.json();
       return deriveAgentProgress(data.steps || [], data.status).tools;
     } catch (err) {
-      return [];
+      return liveProgress.tools;
     }
   };
 
@@ -172,7 +172,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           const data = await res.json();
           if (data.runs && data.runs.length > 0) {
             const latest = data.runs[0];
-            if (latest.status === "running") {
+            if (latest.status === "running" && !controller.signal.aborted) {
               setActiveRunId(latest.id);
             }
           }
