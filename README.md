@@ -117,6 +117,25 @@ flowchart TD
 
 ---
 
+## 🧭 Claude Code Harness (`.claude/`)
+
+This repo ships a small, honest agentic harness under [`.claude/`](./.claude/) so teammates can explore and explain the codebase the same way. Counts match what is actually checked in:
+
+| Kind | Count | Location |
+| :--- | :---: | :--- |
+| **Hooks** | 1 config (`SessionStart`, `PostToolUse`) | [`.claude/hooks.json`](./.claude/hooks.json) |
+| **Skills** | 2 | [`.claude/skills/`](./.claude/skills/) |
+| **Subagent** | 1 | [`.claude/agents/`](./.claude/agents/) |
+| **Settings** | permissions + default plan mode | [`.claude/settings.json`](./.claude/settings.json) |
+
+* **Hooks** — `SessionStart` opens an exploration-mode notes file; `PostToolUse` on `Read` appends a timestamped line to `./notes/exploration-log.txt`.
+* **Skills**
+  * [`explain-feature`](./.claude/skills/explain-feature/SKILL.md) — explain a feature with exact file/line citations
+  * [`trace-data-flow`](./.claude/skills/trace-data-flow/SKILL.md) — walk a request from entry point to output in runtime order
+* **Subagent** — [`code-explorer`](./.claude/agents/code-explorer.md) (Read / Grep / Glob only) returns a structured module summary to the parent agent.
+
+---
+
 ## 🚀 Quick Start & Installation
 
 ### Prerequisites
