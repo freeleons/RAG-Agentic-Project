@@ -289,6 +289,8 @@ def resume_run(run, approved):
     `approved`, then re-enters the normal loop.
     """
     action = PendingAction.query.filter_by(run_id=run.id, status="pending").first()
+    if action is None:
+        return {"run_id": run.id, "status": "failed", "error": "No pending action found to confirm"}
     action.status = "approved" if approved else "rejected"
     action.resolved_at = utcnow()
 
