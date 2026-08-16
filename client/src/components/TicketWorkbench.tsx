@@ -3,26 +3,30 @@ import { AgentRun, Ticket } from "../types";
 
 interface TicketWorkbenchProps {
   ticket: Ticket | null;
-  onRunTriage: (ticket: Ticket) => void;
-  onStopTriage: (ticketId: number) => void;
+  onDraftWithPip?: (ticket: Ticket) => void;
+  isPipProcessing?: boolean;
+  onRunTriage?: (ticket: Ticket) => void;
+  onStopTriage?: (ticketId: number) => void;
   onUpdateTicketStatus: (ticketId: number, status: Ticket["status"]) => void;
   onSendReply: (ticketId: number, replyText: string) => void;
   onUpdateResolutionNotes: (ticketId: number, notes: string) => void;
-  triagingTickets: Record<number, { isProcessing: boolean; runId?: number; statusText?: string }>;
+  triagingTickets?: Record<number, { isProcessing: boolean; runId?: number; statusText?: string }>;
   /** Latest triage run; includes pending_action when HITL confirmation is required */
   latestRun?: AgentRun | null;
-  /** Approve or reject a consequential tool (create_draft / escalate) */
+  /** Approve or reject a consequential tool (escalate) */
   onConfirmPending?: (approved: boolean) => void;
 }
 
 export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
   ticket,
+  onDraftWithPip,
+  isPipProcessing = false,
   onRunTriage,
   onStopTriage,
   onUpdateTicketStatus,
   onSendReply,
   onUpdateResolutionNotes,
-  triagingTickets,
+  triagingTickets = {},
   latestRun = null,
   onConfirmPending,
 }) => {
@@ -77,8 +81,8 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
       return;
     }
 
-    // 3. Fallback for draft_pending status or open tickets
-    if (ticket.status === "draft_pending" && ticket.draft_reply) {
+    // 3. Fallback whenever ticket has a draft_reply
+    if (ticket.draft_reply) {
       setReplyInput(ticket.draft_reply);
       setTicketDrafts((prev) => ({ ...prev, [ticket.id]: ticket.draft_reply! }));
       lastSeenDrafts.current[ticket.id] = ticket.draft_reply;
@@ -318,14 +322,7 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
               </span>
             </div>
 
-            {latestRun.pending_action.tool === "create_draft" && latestRun.pending_action.arguments?.reply_text ? (
-              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-amber-300/60 dark:border-amber-800/60 space-y-1">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Proposed Reply Draft:</span>
-                <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
-                  {String(latestRun.pending_action.arguments.reply_text)}
-                </p>
-              </div>
-            ) : latestRun.pending_action.tool === "escalate" ? (
+            {latestRun.pending_action.tool === "escalate" ? (
               <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-amber-300/60 dark:border-amber-800/60 space-y-1 text-xs">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Escalation Details:</span>
                 <p className="text-slate-800 dark:text-slate-200">
@@ -397,11 +394,11 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
               </span>
 
               <div className="flex items-center space-x-3 ml-auto shrink-0">
-                {/* Shiny & Colorful "Draft with Pip" or "Stop Drafting" Button */}
+                {/* "Draft with Pip" or "Stop Drafting" Button */}
                 {isTicketTriaging ? (
                   <button
                     type="button"
-                    onClick={() => ticket && onStopTriage(ticket.id)}
+                    onClick={() => ticket && onStopTriage?.(ticket.id)}
                     className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition shadow-md cursor-pointer whitespace-nowrap shadow-rose-500/20"
                   >
                     <span>⏹️</span>
@@ -410,15 +407,16 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => ticket && onRunTriage(ticket)}
-                    disabled={!ticket}
-                    className={`px-4 py-2 rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition shadow-md cursor-pointer whitespace-nowrap ${!ticket
-                        ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed"
-                        : "bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white hover:opacity-95 shadow-blue-500/25 pulse-glow"
-                      }`}
+                    onClick={() => ticket && (onDraftWithPip ? onDraftWithPip(ticket) : onRunTriage?.(ticket))}
+                    disabled={!ticket || isPipProcessing || ticket.status === "resolved" || ticket.status === "closed"}
+                    className={`px-4 py-2 rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition shadow-md whitespace-nowrap ${
+                      !ticket || isPipProcessing || ticket.status === "resolved" || ticket.status === "closed"
+                        ? "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-300 dark:border-slate-700 cursor-not-allowed opacity-60 shadow-none"
+                        : "bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white hover:opacity-95 shadow-blue-500/25 pulse-glow cursor-pointer"
+                    }`}
                   >
-                    <span>✨</span>
-                    <span>Draft with Pip</span>
+                    <span>{isPipProcessing ? "⏳" : "✨"}</span>
+                    <span>{isPipProcessing ? "Drafting with Pip..." : "Draft with Pip"}</span>
                   </button>
                 )}
 

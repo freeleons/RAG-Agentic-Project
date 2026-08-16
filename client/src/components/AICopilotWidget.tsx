@@ -14,6 +14,11 @@ interface AICopilotWidgetProps {
   tickets?: Ticket[];
   latestRun: AgentRun | null;
   isProcessing: boolean;
+  onBotThinkingChange?: (isThinking: boolean) => void;
+  pendingDraftQuery?: string | null;
+  onClearPendingDraftQuery?: () => void;
+  onTicketUpdated?: () => void;
+  onDraftGenerated?: (draftText: string, ticketId?: number) => void;
 }
 
 interface ChatMessage {
@@ -24,9 +29,106 @@ interface ChatMessage {
   tools?: ToolActivity[];
 }
 
+export function extractCleanDraft(text: string): string {
+  if (!text) return "";
+  let trimmed = text.trim();
+  if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
+    trimmed = trimmed.replace(/^```[a-zA-Z]*\n?/, "").replace(/\n?```$/, "").trim();
+  }
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const body =
+        parsed?.parameters?.reply?.body ||
+        parsed?.parameters?.body ||
+        parsed?.reply?.body ||
+        parsed?.body ||
+        parsed?.draft_reply ||
+        parsed?.draft ||
+        (typeof parsed?.reply === "string" ? parsed.reply : null);
+      if (typeof body === "string") return extractCleanDraft(body);
+    } catch {
+      // ignore
+    }
+  }
+
+  return trimmed;
+}
+
+export const CopyButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-999999px";
+        textarea.style.top = "-999999px";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied to clipboard!" : "Copy message to clipboard"}
+      aria-label="Copy reply"
+      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all duration-150 cursor-pointer ${
+        copied
+          ? "bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+          : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 border border-slate-200/60 dark:border-slate-700/60 bg-white/70 dark:bg-slate-900/60"
+      }`}
+    >
+      {copied ? (
+        <>
+          <svg className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-bold">Copied!</span>
+        </>
+      ) : (
+        <>
+          <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+            />
+          </svg>
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
+};
+
 export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   user,
+  activeTicket,
+  tickets = [],
+  latestRun,
   isProcessing,
+  onBotThinkingChange,
+  pendingDraftQuery,
+  onClearPendingDraftQuery,
+  onTicketUpdated,
+  onDraftGenerated,
 }) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -114,6 +216,19 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     return () => clearInterval(ticker);
   }, [isBotThinking]);
 
+  // Report thinking status up to parent
+  useEffect(() => {
+    onBotThinkingChange?.(isBotThinking);
+  }, [isBotThinking, onBotThinkingChange]);
+
+  // Handle incoming draft query from Draft with Pip button
+  useEffect(() => {
+    if (pendingDraftQuery && pendingDraftQuery.trim()) {
+      handleSendChatMessage(pendingDraftQuery, true);
+      onClearPendingDraftQuery?.();
+    }
+  }, [pendingDraftQuery]);
+
   const liveProgress = useMemo(() => deriveAgentProgress(runSteps), [runSteps]);
 
   const fetchRunTools = async (runId: number): Promise<ToolActivity[]> => {
@@ -140,7 +255,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
   const status = getPipStatus();
 
-  const handleSendChatMessage = async (queryText?: string) => {
+  const handleSendChatMessage = async (queryText?: string, isExplicitDraft?: boolean) => {
     const textToSend = queryText || inputMessage;
     if (!textToSend.trim()) return;
 
@@ -182,6 +297,9 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       }
     }, 200);
 
+    // The ONLY time the draft flag is triggered is explicitly when the "Draft with Pip" button is clicked
+    const isDraft = Boolean(isExplicitDraft);
+
     try {
       const token = localStorage.getItem("apexcare_token");
       const res = await fetch("/api/chat", {
@@ -190,17 +308,34 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ message: textToSend }),
+        body: JSON.stringify({
+          message: textToSend,
+          ticket_id: activeTicket?.id,
+          is_draft: isDraft,
+        }),
         signal: controller.signal,
       });
 
       let answerText = "";
       let completedRunId: number | null = null;
+
       if (res.ok) {
         const data = await res.json();
-        answerText = data.reply;
         completedRunId = data.run_id;
         setActiveRunId(data.run_id);
+
+        const rawReply = data.reply || "";
+        const isRawDraftJson = rawReply.trim().startsWith("{") && rawReply.includes("draft_replies");
+        if (data.draft_reply || isRawDraftJson) {
+          const finalDraft = extractCleanDraft(data.draft_reply || rawReply);
+          answerText = finalDraft || rawReply;
+          if (finalDraft) {
+            onDraftGenerated?.(finalDraft, data.ticket_id || activeTicket?.id);
+            onTicketUpdated?.();
+          }
+        } else {
+          answerText = rawReply;
+        }
 
         // Flash "completed" state with celebration stars briefly upon success!
         setStatusOverride("completed");
@@ -257,6 +392,19 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         answerText = `I'm fully operational and performing at 100%! Ready to get to work—which support ticket should we review today?`;
       } else if (lower.includes("hi") || lower.includes("hello") || lower.includes("hey")) {
         answerText = `Hello ${user.full_name.split(" ")[0]}! Ready to assist. What support ticket or policy inquiry can I help you with today?`;
+      } else if (lower.includes("draft") || lower.includes("write a reply") || lower.includes("compose a reply") || lower.includes("help me write")) {
+        const reqName = activeTicket?.requester_name?.split(" ")[0] || "there";
+        let fallbackDraft = "";
+        if (lower.includes("vpn")) {
+          fallbackDraft = `Hi ${reqName},\n\nPlease reset your VPN token at vpn.apexcare.tech and reinstall the GlobalProtect certificate per IT security guidelines.\n\nBest regards,\nHR Support Team`;
+        } else if (lower.includes("fsa") || lower.includes("wex")) {
+          fallbackDraft = `Hi ${reqName},\n\nAccording to ApexCare policy, up to $640 in unused Healthcare FSA funds can roll over into 2026. Claims can be submitted via the Wex Mobile app.\n\nBest regards,\nHR Support Team`;
+        } else {
+          fallbackDraft = `Hi ${reqName},\n\nThank you for reaching out to HR Support. Your inquiry regarding "${activeTicket?.title || "your ticket"}" has been reviewed per official ApexCare policy.\n\nPlease let us know if you need any additional assistance.\n\nBest regards,\nHR Support Team`;
+        }
+        answerText = `I have inserted this response in the reply chat:\n\n"${fallbackDraft}"`;
+        onDraftGenerated?.(fallbackDraft, activeTicket?.id);
+        onTicketUpdated?.();
       } else if (lower.includes("fsa") || lower.includes("wex")) {
         answerText =
           "Based on our audited WEX Benefits Policy (wex_benefits_technology_guide.md): Healthcare FSA funds allow up to $640 in unused funds to roll over into 2026. Claims can be submitted via the Wex Mobile app. What shall we tackle next?";
@@ -324,10 +472,10 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       </div>
 
       {/* Content Area - Live AI Chatbot Panel */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 flex flex-col justify-between">
-        <div className="flex-1 flex flex-col justify-between space-y-3">
+      <div className="flex-1 overflow-hidden p-4 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0">
           {/* Chat Messages Timeline */}
-          <div className="space-y-3 overflow-y-auto max-h-[380px] custom-scrollbar pr-1">
+          <div className="flex-1 space-y-3 overflow-y-auto custom-scrollbar pr-1 min-h-0 pb-2">
             {chatMessages.map((msg) => {
               if (msg.sender === "system") {
                 return (
@@ -357,11 +505,19 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                         : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none shadow-xs"
                       }`}
                   >
-                    <p>{msg.text}</p>
+                    <p className="whitespace-pre-wrap">{msg.text}</p>
                     {msg.sender === "pip" && msg.tools && <AgentToolTrace tools={msg.tools} />}
-                    <span className="text-[9px] opacity-70 block text-right mt-1 font-mono">
-                      {msg.timestamp}
-                    </span>
+
+                    <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200/50 dark:border-slate-700/50 text-[9px]">
+                      {msg.sender === "pip" ? (
+                        <CopyButton text={msg.text} />
+                      ) : (
+                        <span></span>
+                      )}
+                      <span className="opacity-70 font-mono">
+                        {msg.timestamp}
+                      </span>
+                    </div>
                   </div>
                 </div>
               );
@@ -374,27 +530,31 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           </div>
 
           {/* Quick Policy Chips & Chat Input Box */}
-          <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 custom-scrollbar text-[10px]">
+          <div className="space-y-2.5 pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+            <div className="flex items-center gap-2 p-1.5 overflow-x-auto custom-scrollbar text-[11px]">
               <button
+                type="button"
+                disabled={isBotThinking}
+                onClick={() => handleSendChatMessage("Tell me about the WFA policy")}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                💬 WFA Policy
+              </button>
+              <button
+                type="button"
+                disabled={isBotThinking}
                 onClick={() => handleSendChatMessage("What is our WEX FSA rollover limit?")}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 💬 FSA Policy
               </button>
               <button
+                type="button"
+                disabled={isBotThinking}
                 onClick={() => handleSendChatMessage("How do employees replace medical ID cards?")}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 💬 Medical IDs
-              </button>
-              <button
-                onClick={() =>
-                  handleSendChatMessage("How do I report a Qualifying Life Event in Employee Navigator?")
-                }
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                💬 Life Events
               </button>
             </div>
 
@@ -407,7 +567,8 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
             >
               <textarea
                 rows={1}
-                placeholder="Ask Pip any policy question..."
+                disabled={isBotThinking}
+                placeholder={isBotThinking ? "Pip is thinking..." : "Ask Pip any policy question..."}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={(e) => {
@@ -416,7 +577,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                     handleSendChatMessage();
                   }
                 }}
-                className="flex-1 px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-y-auto max-h-24 custom-scrollbar font-medium"
+                className="flex-1 px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-y-auto max-h-24 custom-scrollbar font-medium disabled:opacity-50 disabled:bg-slate-200/60 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed"
               />
               {isBotThinking ? (
                 <button

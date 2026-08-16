@@ -63,35 +63,57 @@ export default function MessageBubble({ message, onOpenRun }: Props) {
           <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
             {message.content}
           </Typography>
-          {!isUser && message.awaitingConfirmation && (
-            <Chip
-              size="small"
-              icon={<HourglassTopIcon />}
-              label="waiting for your confirmation"
-              color="warning"
-              sx={{ mt: 1.25, fontWeight: 600 }}
-            />
-          )}
-          {!isUser && !message.awaitingConfirmation && message.runId !== undefined && (
-            <Chip
-              size="small"
-              icon={<SearchIcon />}
-              data-testid={`trace-chip-${message.runId}`}
-              onClick={() => onOpenRun(message.runId!)}
-              label={`${message.stepCount ?? "?"} steps${
-                message.totalLatencyMs != null
-                  ? ` · ${(message.totalLatencyMs / 1000).toFixed(1)}s`
-                  : ""
-              }`}
-              sx={{
-                mt: 1.25,
-                bgcolor: "#F1F5F9",
-                color: "#4F46E5",
-                fontWeight: 600,
-                border: "1px solid #CBD5E1",
-                "&:hover": { bgcolor: "#E2E8F0" },
-              }}
-            />
+          {!isUser && (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1.25, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(message.content)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "3px 8px",
+                  borderRadius: "6px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  border: "1px solid #CBD5E1",
+                  background: "#F8FAFC",
+                  color: "#475569",
+                  cursor: "pointer",
+                }}
+              >
+                📋 Copy
+              </button>
+              {message.awaitingConfirmation && (
+                <Chip
+                  size="small"
+                  icon={<HourglassTopIcon />}
+                  label="waiting for your confirmation"
+                  color="warning"
+                  sx={{ fontWeight: 600 }}
+                />
+              )}
+              {!message.awaitingConfirmation && message.runId !== undefined && (
+                <Chip
+                  size="small"
+                  icon={<SearchIcon />}
+                  data-testid={`trace-chip-${message.runId}`}
+                  onClick={() => onOpenRun(message.runId!)}
+                  label={`${message.stepCount ?? "?"} steps${
+                    message.totalLatencyMs != null
+                      ? ` · ${(message.totalLatencyMs / 1000).toFixed(1)}s`
+                      : ""
+                  }`}
+                  sx={{
+                    bgcolor: "#F1F5F9",
+                    color: "#4F46E5",
+                    fontWeight: 600,
+                    border: "1px solid #CBD5E1",
+                    "&:hover": { bgcolor: "#E2E8F0" },
+                  }}
+                />
+              )}
+            </Box>
           )}
         </Paper>
       </Box>

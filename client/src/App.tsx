@@ -30,8 +30,8 @@ export const mapBackendStepToText = (steps: Array<{ kind: string; tool_name?: st
     switch (latest.tool_name) {
       case "search_knowledge":
         return "🔍 Searching audited policy knowledge base...";
-      case "create_draft":
-        return "✍️ Formulating policy-grounded draft response...";
+      case "list_tickets":
+        return "📋 Retrieving active support tickets...";
       case "escalate":
         return "⚠️ Processing ticket escalation...";
       default:
@@ -58,6 +58,8 @@ export default function App() {
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [auditResetKey, setAuditResetKey] = useState<number>(0);
+  const [pendingDraftQuery, setPendingDraftQuery] = useState<string | null>(null);
+  const [isPipThinking, setIsPipThinking] = useState<boolean>(false);
 
   // Per-ticket triage processing state map
   interface TicketTriageState {
@@ -139,9 +141,33 @@ export default function App() {
     setIsLoadingTickets(true);
     try {
       const data = await fetchTickets();
-      setTickets(data);
-      if (data.length > 0 && !selectedTicket) {
-        setSelectedTicket(data[0]);
+      setTickets((prevList) =>
+        data.map((fresh) => {
+          const old = prevList.find((t) => t.id === fresh.id);
+          return {
+            ...fresh,
+            draft_reply:
+              fresh.draft_reply !== undefined && fresh.draft_reply !== null
+                ? fresh.draft_reply
+                : old?.draft_reply,
+          };
+        })
+      );
+      if (data.length > 0) {
+        if (!selectedTicket) {
+          setSelectedTicket(data[0]);
+        } else {
+          const fresh = data.find((t) => t.id === selectedTicket.id);
+          if (fresh) {
+            setSelectedTicket((prev) => ({
+              ...fresh,
+              draft_reply:
+                fresh.draft_reply !== undefined && fresh.draft_reply !== null
+                  ? fresh.draft_reply
+                  : prev?.draft_reply,
+            }));
+          }
+        }
       }
     } catch (err) {
       console.error(err);
@@ -183,6 +209,22 @@ export default function App() {
       console.error(err);
     } finally {
       setIsLoadingTickets(false);
+    }
+  };
+
+  const handleDraftWithPip = (ticket: Ticket) => {
+    const draftMsg = `Help me write a draft reply to ${ticket.requester_name} for ticket #${ticket.ticket_number || ticket.id} (${ticket.title}):\n\n"${ticket.description}"`;
+    setPendingDraftQuery(draftMsg);
+  };
+
+  const handleDraftGenerated = (draftText: string, ticketId?: number) => {
+    const targetId = ticketId || selectedTicket?.id;
+    if (!targetId) return;
+    setTickets((prev) =>
+      prev.map((t) => (t.id === targetId ? { ...t, draft_reply: draftText } : t))
+    );
+    if (selectedTicket?.id === targetId) {
+      setSelectedTicket((prev) => (prev ? { ...prev, draft_reply: draftText } : null));
     }
   };
 
@@ -264,7 +306,7 @@ export default function App() {
     }
   };
 
-  /** Approve or reject a triage-paused create_draft / escalate action */
+  /** Approve or reject a triage-paused escalate action */
   const handleConfirmPending = async (approved: boolean) => {
     const runId = latestRun?.run_id || (latestRun as any)?.id;
     if (!runId) return;
@@ -404,6 +446,8 @@ export default function App() {
             <TicketWorkbench
               key={auditResetKey}
               ticket={selectedTicket || (tickets.length > 0 ? tickets[0] : null)}
+              onDraftWithPip={handleDraftWithPip}
+              isPipProcessing={isPipThinking}
               onRunTriage={handleRunTriage}
               onStopTriage={handleStopTriage}
               onUpdateTicketStatus={handleUpdateTicketStatus}
@@ -424,6 +468,11 @@ export default function App() {
               tickets={tickets}
               latestRun={latestRun}
               isProcessing={selectedTicket ? Boolean(triagingTickets[selectedTicket.id]?.isProcessing) : false}
+              pendingDraftQuery={pendingDraftQuery}
+              onClearPendingDraftQuery={() => setPendingDraftQuery(null)}
+              onBotThinkingChange={setIsPipThinking}
+              onTicketUpdated={loadTickets}
+              onDraftGenerated={handleDraftGenerated}
             />
           </div>
         </div>
