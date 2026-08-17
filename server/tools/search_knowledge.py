@@ -97,6 +97,9 @@ def search_knowledge(query):
 
     # Detect legitimate no-match conditions from the RAG service
     no_match_phrases = [
+        "there is no relevant information in this workspace",
+        "no relevant information in this workspace",
+        "there is no relevant information",
         "no_policy_match",
         "not found in policy documents",
         "not found in the provided documents",
