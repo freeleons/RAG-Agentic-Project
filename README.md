@@ -254,7 +254,7 @@ npm test -- --run
   <tr>
     <td align="center" width="33%">
       <a href="https://github.com/freeleons">
-        <img src="./assets/jue.webp" width="120px;" alt="Jameson Wang" style="border-radius: 50%;" /><br />
+        <img src="./assets/jue.webp" width="120" alt="Jameson Wang" /><br />
         <sub><b>Jameson Wang</b></sub>
       </a>
       <br />
@@ -263,7 +263,7 @@ npm test -- --run
     </td>
     <td align="center" width="33%">
       <a href="https://github.com/shuziyoshi">
-        <img src="./assets/shuzi.webp" width="120px;" alt="Wendy Gong" style="border-radius: 50%;" /><br />
+        <img src="./assets/shuzi.webp" width="120" alt="Wendy Gong" /><br />
         <sub><b>Wendy Gong</b></sub>
       </a>
       <br />
@@ -272,7 +272,7 @@ npm test -- --run
     </td>
     <td align="center" width="33%">
       <a href="https://github.com/ddgiovinazzo">
-        <img src="./assets/daniel.webp" width="120px;" alt="Daniel Giovinazzo" style="border-radius: 50%;" /><br />
+        <img src="./assets/daniel.webp" width="120" alt="Daniel Giovinazzo" /><br />
         <sub><b>Daniel Giovinazzo</b></sub>
       </a>
       <br />
