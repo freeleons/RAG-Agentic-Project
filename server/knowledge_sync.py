@@ -48,9 +48,10 @@ def sync_one_resolved_ticket(ticket):
         "addToWorkspaces": cfg["ANYTHINGLLM_WORKSPACE"],
     }
 
+    timeout_val = max(int(cfg.get("TOOL_TIMEOUT_SECONDS", 180)), 180)
     try:
         resp = requests.post(
-            url, json=payload, headers=headers, timeout=cfg["TOOL_TIMEOUT_SECONDS"]
+            url, json=payload, headers=headers, timeout=timeout_val
         )
     except requests.RequestException as exc:
         current_app.logger.warning("knowledge sync: ticket #%s failed: %s", ticket.id, exc)

@@ -43,7 +43,7 @@ class Config:
     # Hard cap on loop iterations per run (LLM calls + tool calls combined).
     MAX_AGENT_STEPS = int(os.environ.get("MAX_AGENT_STEPS", "6"))
     # HTTP timeout for outbound tool calls (e.g. AnythingLLM requests).
-    TOOL_TIMEOUT_SECONDS = int(os.environ.get("TOOL_TIMEOUT_SECONDS", "20"))
+    TOOL_TIMEOUT_SECONDS = int(os.environ.get("TOOL_TIMEOUT_SECONDS", "180"))
     JWT_EXPIRY_HOURS = 24
 
     # Comma-separated list of emails granted admin rights in the Audit tab
