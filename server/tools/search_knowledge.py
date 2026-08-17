@@ -68,17 +68,7 @@ def search_knowledge(query):
     )
 
     core_query = extract_core_search_query(query)
-    expanded_query = expand_knowledge_query(core_query if core_query else query)
-
-    # Direct AnythingLLM to synthesize answers from context but fail gracefully if absent.
-    instructed_message = (
-        f"Inquiry: {expanded_query}\n\n"
-        "System Instruction: Answer the inquiry strictly using the provided document context. "
-        "Extract and summarize the relevant policy rules, numbers, limits, percentages, and guidelines. "
-        "If the provided documents do not contain relevant information to address the inquiry, "
-        "reply with 'NO_POLICY_MATCH: Information not found in policy documents.' "
-        "Do not rely on outside knowledge."
-    )
+    clean_message = core_query if core_query else query.strip()
 
     # Failures return {"error": ...} instead of raising: the agent loop treats
     # that as an observation the model can react to (e.g. escalate), and
@@ -87,7 +77,7 @@ def search_knowledge(query):
     try:
         resp = requests.post(
             url,
-            json={"message": instructed_message, "mode": "query"},
+            json={"message": clean_message, "mode": "query"},
             headers={"Authorization": f"Bearer {cfg['ANYTHINGLLM_API_KEY']}"},
             timeout=timeout_val,  # tool timeout guardrail (minimum 180s for local LLMs)
         )
@@ -103,5 +93,25 @@ def search_knowledge(query):
     data = resp.json()
     # Flatten the source objects to display names for the trace panel.
     sources = [s.get("title") or s.get("url") or "unknown" for s in data.get("sources", [])]
+    answer_text = (data.get("textResponse") or "").strip()
 
-    return {"answer": data.get("textResponse", ""), "sources": sources}
+    # Detect legitimate no-match conditions from the RAG service
+    no_match_phrases = [
+        "no_policy_match",
+        "not found in policy documents",
+        "not found in the provided documents",
+        "do not contain any information",
+        "cannot find any information",
+        "no information is provided",
+        "no information available",
+        "does not mention",
+        "not mentioned in the context",
+        "no relevant information",
+    ]
+    if (not sources and not answer_text) or any(phrase in answer_text.lower() for phrase in no_match_phrases):
+        return {
+            "answer": "NO_POLICY_MATCH: Information not found in policy documents.",
+            "sources": sources,
+        }
+
+    return {"answer": answer_text, "sources": sources}
