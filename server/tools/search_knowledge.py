@@ -34,6 +34,26 @@ def expand_knowledge_query(query: str) -> str:
     return q
 
 
+def extract_core_search_query(query: str) -> str:
+    """Extract the actual policy question from ticket wrapper text or draft requests."""
+    if not query or not isinstance(query, str):
+        return ""
+    q = query.strip()
+    m = re.search(r'\"([^\"]+)\"', q)
+    if m:
+        extracted = m.group(1).strip()
+        extracted = re.sub(r"^(hi|hello)\s+(hr\s*team|hr|team|all)[,\.\!]?\s*", "", extracted, flags=re.IGNORECASE).strip()
+        if len(extracted) > 10:
+            return extracted
+    cleaned = re.sub(
+        r"^(help me (write a draft reply|draft a reply|answer)|draft a reply to|can you tell me)\s+(to\s+[^:]+:\s*)?",
+        "",
+        q,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned
+
+
 def search_knowledge(query):
     """Query the AnythingLLM workspace with expanded query. Returns {"answer", "sources"} or {"error"}.
 
@@ -47,17 +67,17 @@ def search_knowledge(query):
         f"/api/v1/workspace/{cfg['ANYTHINGLLM_WORKSPACE']}/chat"
     )
 
-    expanded_query = expand_knowledge_query(query)
+    core_query = extract_core_search_query(query)
+    expanded_query = expand_knowledge_query(core_query if core_query else query)
 
     # Direct AnythingLLM to synthesize answers from context but fail gracefully if absent.
     instructed_message = (
-        f"User Query: {expanded_query}\n\n"
-        "System Instruction: Answer the user's query using ONLY the provided document context. "
-        "Review the context carefully to find relevant policy details, guidelines, or procedures. "
-        "You may synthesize and summarize the provided text to directly address the query. "
-        "If the provided documents do not contain enough relevant information to answer the question, "
-        "you must reply exactly with 'NO_POLICY_MATCH: Information not found in policy documents.' "
-        "Do not rely on outside knowledge or make assumptions beyond what is written."
+        f"Inquiry: {expanded_query}\n\n"
+        "System Instruction: Answer the inquiry strictly using the provided document context. "
+        "Extract and summarize the relevant policy rules, numbers, limits, percentages, and guidelines. "
+        "If the provided documents do not contain relevant information to address the inquiry, "
+        "reply with 'NO_POLICY_MATCH: Information not found in policy documents.' "
+        "Do not rely on outside knowledge."
     )
 
     # Failures return {"error": ...} instead of raising: the agent loop treats
