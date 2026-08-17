@@ -9,6 +9,21 @@
 
 > **ApexCare** is a production-grade, multi-tenant **Autonomous AI Support Triage Agent** and **RAG Knowledge Service** designed to assist enterprise HR and IT operations. Built from first principles using Python/Flask and React (TypeScript), it implements a customized **bounded reasoning loop**, **stateful Human-in-the-Loop (HITL) execution safety**, **prompt injection defense boundaries**, and a decorator-driven **observability & analytics system** to deliver auditability at scale.
 
+<details>
+  <summary><b>📑 Table of Contents (Click to expand)</b></summary>
+
+  - [🎥 Demos & Visual Showcase](#-demos--visual-showcase)
+  - [🏗️ System Architecture](#️-system-architecture)
+  - [🌟 Key Engineering Highlights](#-key-engineering-highlights)
+  - [🛡️ AI Safety & Prompt Injection Protection](#️-ai-safety--prompt-injection-protection)
+  - [🛠️ Tech Stack](#️-tech-stack)
+  - [🧭 Claude Code Harness (`.claude/`)](#-claude-code-harness-claude)
+  - [🚀 Quick Start & Installation](#-quick-start--installation)
+  - [🧪 Testing & Validation](#-testing--validation)
+  - [👥 Authors & Team](#-authors--team)
+  - [📄 License](#-license)
+</details>
+
 ---
 
 ## 🎥 Demos & Visual Showcase
