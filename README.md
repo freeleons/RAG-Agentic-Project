@@ -144,6 +144,7 @@ flowchart TD
 
 ### 4. Telemetry & Analytics Dashboard
 * **Decorator Telemetry:** Logging decorators in [`server/observability.py`](file:///Users/daniel/code/flatiron/RAG-Agentic-Project/server/observability.py) capture completion/prompt tokens, model info, execution latency (in milliseconds), tool parameters, and raw JSON logs.
+* **Provider and error type:** Each run records `provider` (`ollama` or `openai_compatible`); failed steps store `error_type` (`Timeout`, `ConnectionError`, …) so traces can tell which backend served the run and why a call failed.
 * **Analytical UI:** The Audit Dashboard visualizes token volume trends, failure statistics, trace trees, and latency buckets (20%, 50%, 90% latency percentiles).
 
 ---
