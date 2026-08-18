@@ -12,14 +12,44 @@ is behind generate().
 """
 
 import json
+import random
 import time
 
 import requests
 from flask import current_app
 
+# Cap wait time so a 429 storm cannot park one request for ~60s.
+# LiteLLM RateLimitErrorRetries: 5 with this curve can wait up to ~60s
+# before giving up, which inflates P99; we keep max_retries=3 and cap at 16s.
+MAX_RETRY_AFTER_SECONDS = 16.0
+
 
 class LLMError(Exception):
     """The model endpoint could not be reached or returned an error."""
+
+
+def wait_for_retry(attempt: int, base: float = 2.0, max_retry_after: float = MAX_RETRY_AFTER_SECONDS) -> float:
+    """Seconds to sleep before the next LLM HTTP retry.
+
+    Simplified from litellm/router.py: wait time grows exponentially with jitter
+    to avoid a thundering herd (every client retrying at the same instant).
+
+        # exp_backoff = 2 * (base ** attempt), capped at max_retry_after
+        # Then add uniform jitter in [0, exp_backoff/2]
+        exp = min(2 * (base ** attempt), max_retry_after)
+        jitter = random.uniform(0, exp / 2)
+        return exp + jitter
+
+    We use `attempt - 1` because generate()'s loop is 1-based (first failure is
+    attempt=1). That matches LiteLLM's ~2s, ~4-6s, ~8-12s, ~16-24s sequence
+    with base=2, instead of starting at ~4s.
+    """
+    # exp_backoff = 2 * (base ** (attempt - 1)), capped at max_retry_after
+    exp = min(2 * (base ** (attempt - 1)), max_retry_after)
+    # Uniform jitter in [0, exp_backoff/2] so concurrent Gemini/Ollama clients
+    # do not retry in lockstep after a shared RateLimitError / 429.
+    jitter = random.uniform(0, exp / 2)
+    return exp + jitter
 
 
 def _endpoint_and_headers():
@@ -68,12 +98,19 @@ def generate(messages, tools, max_retries=3, timeout=120):
             err_detail = ""
             if hasattr(exc, "response") and exc.response is not None:
                 err_detail = f" [HTTP {exc.response.status_code}: {exc.response.text}]"
+            # Hosted Gemini is more likely to 429 than local Ollama; backoff
+            # here applies to both backends because they share generate().
+            delay = wait_for_retry(attempt) if attempt < max_retries else 0
             current_app.logger.warning(
                 f"LLM request attempt {attempt}/{max_retries} failed ({type(exc).__name__}){err_detail}. "
-                f"Retrying in {attempt * 2}s..."
+                f"Retrying in {delay:.1f}s..."
             )
             if attempt < max_retries:
-                time.sleep(attempt * 2)  # backoff grows with each attempt: 2s, 4s
+                # Attempt sequence with base=2: ~2s, ~4-6s, ~8-12s.
+                # Hitting RateLimitErrorRetries: 5 (LiteLLM default) means up to
+                # ~60s of waiting; we stop at max_retries=3 plus the 16s cap.
+                time.sleep(delay)
+
     else:
         current_app.logger.error(f"All {max_retries} LLM generation retries exhausted.")
         raise LLMError(f"model call failed after {max_retries} attempts: {last_exception}") from last_exception

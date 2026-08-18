@@ -133,6 +133,7 @@ flowchart TD
 * **First-Principles Design:** Built directly in [`server/agent.py`](file:///Users/daniel/code/flatiron/RAG-Agentic-Project/server/agent.py) without heavy black-box orchestrators (e.g. LangChain or AutoGen) to ensure complete transparency.
 * **Deterministic Bounds:** Governed by strict step limits (`MAX_AGENT_STEPS = 6`) and tool timeouts (`TOOL_TIMEOUT_SECONDS = 30`) to prevent runaway recursive reasoning loops, hallucinated cycles, or API cost overruns.
 * **Schema Validation & Self-Correction:** Model tool calls are checked against JSON schemas before execution. Schema mismatches trigger a structured error response back to the agent with a 1-retry self-correction cap.
+* **Transient LLM retries:** Timeouts and 429s retry inside [`generate()`](./server/llm.py) with exponential backoff and jitter, capped so retries cannot stall a run for ~60s.
 
 ### 2. Human-in-the-Loop (HITL) Execution Safety
 * **Consequential Actions Guarded:** Critical actions (like writing ticket drafts or routing escalations) are marked as `requires_confirmation = True`. 
