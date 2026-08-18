@@ -26,7 +26,7 @@ from flask import current_app
 from sqlalchemy import func
 
 from server.hitl import execute_tool, execute_tool_with_hitl, requires_hitl
-from server.llm import generate
+from server.llm import generate, stamp_run_llm_identity
 from server.loop_guard import LoopGuard
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
@@ -125,6 +125,8 @@ def _finish(run, status, answer):
 
 def run_agent(run, goal):
     """Run the bounded agent loop for a fresh user goal."""
+    stamp_run_llm_identity(run)
+    db.session.commit()
     # Build the initial prompt: system persona + earlier conversation turns
     # + the new goal. Only messages BEFORE the triggering one are history.
     history = (

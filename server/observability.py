@@ -2,10 +2,18 @@
 call is executed AND logged. The agent loop never calls generate() or a tool
 handler directly — it always goes through record_step(), which guarantees the
 trace in the run_steps table is complete.
+
+feat/obs-provider-error-type: one RunStep per LLM/tool call (one inference
+span). Run.id is the trace; RunStep.seq is span order. We store
+gen_ai.provider.name on Run and error.type on failed steps.
+
+中文：每次 LLM/工具调用对应一条 RunStep（一次推理 span）。Run.id 即 trace，
+RunStep.seq 为 span 顺序；Run 存 gen_ai.provider.name，失败步骤存 error.type。
 """
 
 import time
 
+from server.llm import classify_error_type
 from server.models import RunStep, db
 
 
@@ -16,10 +24,12 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
     agent loop can degrade gracefully while the failure stays in the log.
     """
     start = time.perf_counter()
+    error_type = None
     try:
         result = fn()
     except Exception as exc:  # noqa: BLE001 — every failure must reach the log
         result = {"error": str(exc)}
+        error_type = classify_error_type(exc)
     latency_ms = int((time.perf_counter() - start) * 1000)
     # generate() piggybacks token usage on its result; pull it out so it lands
     # in dedicated columns instead of being duplicated inside `result`.
@@ -39,6 +49,7 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
         latency_ms=latency_ms,
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
+        error_type=error_type,
     )
     db.session.add(step)
     db.session.commit()

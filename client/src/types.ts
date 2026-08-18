@@ -72,6 +72,7 @@ export interface RunStep {
   llm_messages?: any[];
   prompt_tokens?: number;
   completion_tokens?: number;
+  error_type?: string | null;
 }
 
 export interface PendingAction {
@@ -93,6 +94,7 @@ export interface RunDetail {
   id: number;
   status: string;
   model: string | null;
+  provider?: string | null;
   total_latency_ms: number | null;
   created_at: string;
   steps: TraceStep[];
@@ -145,6 +147,7 @@ export interface RunListItem {
   conversation_id: number;
   conversation_title: string;
   model: string | null;
+  provider?: string | null;
   step_count: number;
   total_latency_ms: number | null;
   prompt_tokens: number;

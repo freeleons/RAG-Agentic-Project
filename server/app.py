@@ -71,6 +71,20 @@ def create_app(test_config=None):
                     with db.engine.connect() as conn:
                         conn.execute(text("ALTER TABLE tickets ADD COLUMN replies_json TEXT"))
                         conn.commit()
+            # feat/obs-provider-error-type: bolt on Run.provider / RunStep.error_type
+            # 中文：简易迁移，为 runs 加 provider、为 run_steps 加 error_type。
+            if "runs" in inspector.get_table_names():
+                run_cols = [c["name"] for c in inspector.get_columns("runs")]
+                if "provider" not in run_cols:
+                    with db.engine.connect() as conn:
+                        conn.execute(text("ALTER TABLE runs ADD COLUMN provider VARCHAR(32)"))
+                        conn.commit()
+            if "run_steps" in inspector.get_table_names():
+                step_cols = [c["name"] for c in inspector.get_columns("run_steps")]
+                if "error_type" not in step_cols:
+                    with db.engine.connect() as conn:
+                        conn.execute(text("ALTER TABLE run_steps ADD COLUMN error_type VARCHAR(64)"))
+                        conn.commit()
         except Exception:
             pass
 

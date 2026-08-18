@@ -76,6 +76,8 @@ def test_llm_failure_fails_gracefully(app, run, monkeypatch):
     outcome = run_agent(run, "anything")
     assert outcome["status"] == "failed"
     assert outcome["answer"]  # a human-readable apology, not empty
+    assert run.provider == "ollama"
+    assert run.steps[0].error_type == "LLMError"
 
 
 
