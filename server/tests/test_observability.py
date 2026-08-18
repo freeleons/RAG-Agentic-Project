@@ -31,7 +31,32 @@ def test_record_step_captures_exception_as_error(app, run):
     assert result == {"error": "model down"}
     step = RunStep.query.filter_by(run_id=run.id).one()
     assert step.result == {"error": "model down"}
+    assert step.error_type == "RuntimeError"
     assert step.llm_messages == [{"role": "user", "content": "x"}]
+
+
+def test_record_step_classifies_timeout_and_connection_error(app, run):
+    """feat/obs-provider-error-type: persist Timeout / ConnectionError on RunStep.
+
+    中文：record_step 应把 Timeout、ConnectionError 写入 RunStep.error_type。
+    """
+    import requests
+
+    from server.models import RunStep
+    from server.observability import record_step
+
+    def timeout():
+        raise requests.Timeout("timed out")
+
+    def refused():
+        raise requests.ConnectionError("refused")
+
+    record_step(run.id, 1, "llm_call", timeout)
+    record_step(run.id, 2, "llm_call", refused)
+
+    steps = RunStep.query.filter_by(run_id=run.id).order_by(RunStep.seq).all()
+    assert steps[0].error_type == "Timeout"
+    assert steps[1].error_type == "ConnectionError"
 
 
 def test_record_step_stores_tokens_and_strips_usage(app, run):

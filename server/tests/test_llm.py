@@ -154,8 +154,38 @@ def test_generate_raises_llm_error_on_connection_failure(app, monkeypatch):
     monkeypatch.setattr("server.llm.time.sleep", lambda s: None)
     from server.llm import LLMError, generate
 
-    with pytest.raises(LLMError):
+    with pytest.raises(LLMError) as caught:
         generate([], [])
+    assert caught.value.error_type == "ConnectionError"
+
+
+def test_generate_timeout_sets_error_type(app, monkeypatch):
+    """feat/obs-provider-error-type: Timeout maps to LLMError.error_type.
+
+    中文：超时异常应映射为 error_type == "Timeout"。
+    """
+    def fake_post(*a, **k):
+        raise requests.Timeout("timed out")
+
+    monkeypatch.setattr("server.llm.requests.post", fake_post)
+    monkeypatch.setattr("server.llm.time.sleep", lambda s: None)
+    from server.llm import LLMError, generate
+
+    with pytest.raises(LLMError) as caught:
+        generate([], [])
+    assert caught.value.error_type == "Timeout"
+
+
+def test_llm_provider_ollama_vs_hosted(app):
+    """feat/obs-provider-error-type: default ollama; hosted URL → openai_compatible.
+
+    中文：未配置托管 URL 时为 ollama；设置 AGENT_API_BASE_URL 后为 openai_compatible。
+    """
+    from server.llm import llm_provider
+
+    assert llm_provider() == "ollama"
+    app.config["AGENT_API_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert llm_provider() == "openai_compatible"
 
 
 def test_generate_parses_usage(app, monkeypatch):

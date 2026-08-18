@@ -32,7 +32,7 @@ from sqlalchemy import func
 from server.agent import resume_run, run_agent
 from server.auth import require_auth
 from server.hitl import execute_tool_with_hitl
-from server.llm import generate
+from server.llm import generate, llm_provider, stamp_run_llm_identity
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
 from server.tools import openai_tool_defs, validate_arguments
@@ -72,6 +72,7 @@ def _serialize_steps(run, include_messages=False):
             "arguments": s.arguments,
             "result": s.result,
             "latency_ms": s.latency_ms,
+            "error_type": s.error_type,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -84,6 +85,7 @@ def _serialize_run(run):
         "run_id": run.id,
         "status": run.status,
         "model": run.model,
+        "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
@@ -283,6 +285,7 @@ def list_runs():
             "conversation_id": conv.id,
             "conversation_title": conv.title,
             "model": run.model,
+            "provider": run.provider,
             "step_count": count,
             "total_latency_ms": run.total_latency_ms,
             "prompt_tokens": pt,
@@ -309,6 +312,7 @@ def get_run(run_id):
         "id": run.id,
         "status": run.status,
         "model": run.model,
+        "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "created_at": run.created_at.isoformat(),
         "steps": _serialize_steps(run, include_messages=True),
@@ -697,6 +701,7 @@ def triage_ticket_endpoint(ticket_id):
     db.session.commit()
 
     run = Run(conversation_id=conv.id, user_message_id=msg.id, status="running")
+    stamp_run_llm_identity(run)
     db.session.add(run)
     db.session.commit()
 
@@ -975,6 +980,7 @@ def pip_chat():
         user_message_id=msg.id,
         status="running",
         model=current_app.config["AGENT_MODEL"],
+        provider=llm_provider(),
     )
     db.session.add(run)
     db.session.commit()

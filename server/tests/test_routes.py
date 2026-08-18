@@ -28,6 +28,7 @@ def test_get_run_observability_view(client, auth_headers, other_headers):
     assert resp.status_code == 200
     assert resp.get_json()["id"] == run_id
     assert "steps" in resp.get_json()
+    assert "provider" in resp.get_json()
     assert resp.get_json().get("pending_action") is None
 
     assert client.get(f"/api/runs/{run_id}", headers=other_headers).status_code == 404

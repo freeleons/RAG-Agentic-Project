@@ -86,6 +86,10 @@ class Run(db.Model):
     user_message_id = db.Column(db.Integer, db.ForeignKey("messages.id"), nullable=False)
     status = db.Column(db.String(32), nullable=False, default="running")
     model = db.Column(db.String(128))          # which LLM served this run
+    # feat/obs-provider-error-type: gen_ai.provider.name — "ollama" (default)
+    # or "openai_compatible" (hosted).
+    # 中文：对应 OTel gen_ai.provider.name；默认 "ollama"，托管模型为 "openai_compatible"。
+    provider = db.Column(db.String(32))
     total_latency_ms = db.Column(db.Integer)   # sum of step latencies, set on finish
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     # run.steps yields the trace in execution order (seq 1, 2, 3, ...).
@@ -99,6 +103,13 @@ class RunStep(db.Model):
     latency and captures token usage. `llm_messages` stores the full prompt
     sent to the model for llm_call steps — that's what makes runs resumable
     (see agent.resume_run) and fully auditable in the UI.
+
+    feat/obs-provider-error-type: maps loosely to an OTel GenAI span
+    (duration_ms → latency_ms, error.type → error_type). Token counts stay
+    as the provider total (not four layers).
+
+    中文：大致对应 OTel GenAI span（latency_ms、error_type）；token 仅存提供商
+    返回的总量，不做四层拆分。
     """
 
     __tablename__ = "run_steps"
@@ -113,6 +124,9 @@ class RunStep(db.Model):
     latency_ms = db.Column(db.Integer)
     prompt_tokens = db.Column(db.Integer)            # token usage reported by the model
     completion_tokens = db.Column(db.Integer)
+    # feat/obs-provider-error-type: error.type (OTel) — Timeout | ConnectionError | …
+    # 中文：对应 OTel error.type，如 Timeout、ConnectionError 等。
+    error_type = db.Column(db.String(64))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 

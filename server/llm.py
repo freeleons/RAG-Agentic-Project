@@ -19,13 +19,66 @@ import requests
 from flask import current_app
 
 # Cap wait time so a 429 storm cannot park one request for ~60s.
-# LiteLLM RateLimitErrorRetries: 5 with this curve can wait up to ~60s
 # before giving up, which inflates P99; we keep max_retries=3 and cap at 16s.
 MAX_RETRY_AFTER_SECONDS = 16.0
 
 
 class LLMError(Exception):
-    """The model endpoint could not be reached or returned an error."""
+    """The model endpoint could not be reached or returned an error.
+
+    feat/obs-provider-error-type: `error_type` is a stable label for
+    observability (Timeout, ConnectionError, HTTPError, …), matching OTel
+    error.type more closely than the full message.
+    # 中文：`error_type` 是可观测用的稳定标签（Timeout、ConnectionError 等），
+    # 比完整错误信息更接近 OTel 的 error.type。
+    """
+
+    def __init__(self, message, error_type=None):
+        super().__init__(message)
+        self.error_type = error_type
+
+
+def llm_provider():
+    """feat/obs-provider-error-type: ollama vs openai_compatible (Gemini, etc.).
+
+    中文：返回当前 LLM 后端——本地 ollama 或托管的 openai_compatible（如 Gemini）。
+    """
+    if current_app.config.get("AGENT_API_BASE_URL"):
+        return "openai_compatible"
+    return "ollama"
+
+
+def stamp_run_llm_identity(run):
+    """feat/obs-provider-error-type: copy current model + provider onto the Run.
+
+    中文：把当前 model 和 provider 写入 Run 记录，供审计/可观测使用。
+    """
+    if not run.model:
+        run.model = current_app.config.get("AGENT_MODEL")
+    if not run.provider:
+        run.provider = llm_provider()
+
+
+def classify_error_type(exc: BaseException) -> str:
+    """feat/obs-provider-error-type: map to Timeout | ConnectionError | type name.
+
+    Check Timeout before ConnectionError because requests.ConnectTimeout
+    subclasses both.
+
+    中文：把异常映射为稳定错误类型（Timeout、ConnectionError 或类名）。
+    先判断 Timeout 再判断 ConnectionError，因为 ConnectTimeout 同时继承两者。
+    """
+    named = getattr(exc, "error_type", None)
+    if named:
+        return named
+    if isinstance(exc, requests.Timeout):
+        return "Timeout"
+    if isinstance(exc, requests.ConnectionError):
+        return "ConnectionError"
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        return classify_error_type(cause)
+    return type(exc).__name__
 
 
 def wait_for_retry(attempt: int, base: float = 2.0, max_retry_after: float = MAX_RETRY_AFTER_SECONDS) -> float:
@@ -107,13 +160,16 @@ def generate(messages, tools, max_retries=3, timeout=120):
             )
             if attempt < max_retries:
                 # Attempt sequence with base=2: ~2s, ~4-6s, ~8-12s.
-                # Hitting RateLimitErrorRetries: 5 (LiteLLM default) means up to
+                # Hitting RateLimitErrorRetries: 5 means up to
                 # ~60s of waiting; we stop at max_retries=3 plus the 16s cap.
                 time.sleep(delay)
 
     else:
         current_app.logger.error(f"All {max_retries} LLM generation retries exhausted.")
-        raise LLMError(f"model call failed after {max_retries} attempts: {last_exception}") from last_exception
+        raise LLMError(
+            f"model call failed after {max_retries} attempts: {last_exception}",
+            error_type=classify_error_type(last_exception),
+        ) from last_exception
 
     data = resp.json()
     message = data["choices"][0]["message"]
