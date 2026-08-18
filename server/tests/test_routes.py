@@ -98,19 +98,17 @@ def test_pip_chat_routes(client, auth_headers, monkeypatch):
 
     resp = client.post("/api/chat", json={"message": "PTO policy"}, headers=auth_headers)
     assert resp.status_code == 200
-    assert resp.get_json()["reply"] == "I'm Pip! Let's get back to work!"
+    assert "I'm Pip! Let's get back to work!" in resp.get_json()["reply"]
 
-    # Assert generate called twice: 1 for classification, 1 for final response
-    assert len(mock_called) == 2
     # Assert search_knowledge was called
     assert len(search_called) == 1
     assert search_called[0] == "PTO policy"
 
-    # Assert second generate got system prompt with knowledge
-    system_msg = mock_called[1][0][0]
+    # Assert generate got system prompt with knowledge
+    system_msg = mock_called[-1][0][0]
     assert "You are Pip" in system_msg["content"]
     assert "AUDITED_POLICY_KNOWLEDGE_RESULT" in system_msg["content"]
-    assert "NO_POLICY_MATCH" not in system_msg["content"]
+    assert "[SYSTEM STATUS: NO_POLICY_MATCH]" not in system_msg["content"]
 
     # Test chat response with off-topic question classified as NO (should skip search_knowledge!)
     mock_called.clear()
@@ -131,10 +129,180 @@ def test_pip_chat_routes(client, auth_headers, monkeypatch):
     assert len(mock_called) == 2
     # Assert search_knowledge was SKIPPED (not called!)
     assert len(search_called) == 0
-    # Assert second generate got system prompt with no_policy_match instructions
+    # Assert second generate got general system prompt
     system_msg = mock_called[1][0][0]
     assert "You are Pip" in system_msg["content"]
-    assert "The knowledge base search found no matching policy." in system_msg["content"]
+    assert "General Chit-Chat" in system_msg["content"]
+
+
+def test_pip_chat_drafting_mode(client, auth_headers, monkeypatch):
+    """POST /api/chat should recognize drafting requests, set ticket.draft_reply, and return draft info."""
+    from server.models import Ticket, db
+
+    ticket = Ticket.query.first()
+    assert ticket is not None
+    ticket.draft_reply = None
+    db.session.commit()
+
+    captured_messages = []
+
+    def mock_generate(messages, tools):
+        captured_messages.append(messages)
+        if len(messages) == 1 and "intent classification" in messages[0]["content"]:
+            return {"type": "final", "content": "DRAFT"}
+        return {
+            "type": "final",
+            "content": (
+                f"Hi {ticket.requester_name},\n\n"
+                "According to ApexCare policy, your request has been reviewed. "
+                "Please follow up if you have any questions.\n\n"
+                "Best regards,\nHR Support Team"
+            ),
+        }
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr(
+        "server.routes.search_knowledge",
+        lambda q: {"answer": "Official policy info...", "sources": ["guide.pdf"]},
+    )
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "message": f"Help me write a draft reply to {ticket.requester_name} for ticket #{ticket.ticket_number}",
+            "ticket_id": ticket.id,
+            "is_draft": True,
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "completed"
+    assert f"Hi {ticket.requester_name}" in data["reply"]
+    assert data["ticket_id"] == ticket.id
+    assert "HR Support Team" in data["draft_reply"]
+
+    # Verify ticket in database was automatically updated with the draft reply
+    db.session.refresh(ticket)
+    assert ticket.draft_reply is not None
+    assert f"Hi {ticket.requester_name}" in ticket.draft_reply
+    assert "HR Support Team" in ticket.draft_reply
+
+    # Verify generate was called directly for draft without LLM classification
+    assert len(captured_messages) == 1
+    system_prompt = captured_messages[0][0]["content"]
+    assert "drafting an official employee support reply" in system_prompt
+    assert "AUDITED_POLICY_KNOWLEDGE_RESULT" in system_prompt
+
+
+def test_pip_chat_cleans_raw_json_tool_output(client, auth_headers, monkeypatch):
+    """POST /api/chat should cleanly extract draft body when LLM outputs raw tool JSON."""
+    import json
+    from server.models import Ticket, db
+
+    ticket = Ticket.query.first()
+    assert ticket is not None
+    ticket.draft_reply = None
+    db.session.commit()
+
+    raw_json_tool_output = json.dumps({
+        "name": "draft_replies",
+        "parameters": {
+            "ticket_id": f"APX-{ticket.id}",
+            "reply": {
+                "body": (
+                    f"Hi {ticket.requester_name},\n\n"
+                    "Thank you for reaching out regarding your inquiry. "
+                    "Our STD plan provides coverage for 60% to 80% of your salary.\n\n"
+                    "Best regards,\nHR Support Team"
+                ),
+                "status": "applied",
+                "sent_date": "2024-02-21T14:30:00Z"
+            }
+        }
+    })
+
+    def mock_generate(messages, tools):
+        return {"type": "final", "content": raw_json_tool_output}
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr(
+        "server.routes.search_knowledge",
+        lambda q: {"answer": "STD policy details...", "sources": ["std.pdf"]},
+    )
+
+    resp = client.post(
+        "/api/chat",
+        json={"message": f"Draft reply for {ticket.requester_name}", "ticket_id": ticket.id, "is_draft": True},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "completed"
+    assert "draft_replies" not in data["reply"]
+    assert "parameters" not in data["reply"]
+    assert "I have inserted this response in the reply chat" not in data["reply"]
+    assert f"Hi {ticket.requester_name}" in data["draft_reply"]
+    assert "STD plan provides coverage" in data["draft_reply"]
+
+    # Verify DB was updated with the clean human-readable body only
+    db.session.refresh(ticket)
+    assert ticket.draft_reply is not None
+    assert "draft_replies" not in ticket.draft_reply
+    assert f"Hi {ticket.requester_name}" in ticket.draft_reply
+    assert "I have inserted this response in the reply chat" not in ticket.draft_reply
+
+
+def test_pip_chat_knowledge_search_does_not_insert_draft(client, auth_headers, monkeypatch):
+    """General knowledge search questions must NOT populate ticket draft replies."""
+    from server.models import Ticket, db
+
+    ticket = Ticket.query.first()
+    assert ticket is not None
+    ticket.draft_reply = None
+    db.session.commit()
+
+    kb_raw_answer = (
+        'According to [CONTEXT 1]: "WEX Flexible Spending Accounts (FSA) Financial Limits", '
+        'the Healthcare FSA Rollover Limit is Up to $640 of unused funds from the current plan year '
+        'may be rolled over into the 2026 plan year.'
+    )
+
+    # Model hallucinates fake lookup_policy schema
+    fake_tool_call = '{"name": "lookup_policy", "parameters": {"context": "WEX Flexible Spending Accounts (FSA) Financial Limits"}}'
+
+    def mock_generate(messages, tools):
+        if len(messages) == 1 and "routing assistant" in messages[0]["content"]:
+            return {"type": "final", "content": "YES"}
+        return {"type": "final", "content": fake_tool_call}
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr(
+        "server.routes.search_knowledge",
+        lambda q: {"answer": kb_raw_answer, "sources": ["policies.md"]},
+    )
+
+    resp = client.post(
+        "/api/chat",
+        json={"message": "What is the FSA rollover limit?", "ticket_id": ticket.id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "completed"
+
+    # Pre-rendered clean text should be present without fake tool JSON
+    assert "lookup_policy" not in data["reply"]
+    assert "parameters" not in data["reply"]
+    assert "[CONTEXT 1]" not in data["reply"]
+    assert "640" in data["reply"]
+
+    # Must NOT return draft_reply
+    assert "draft_reply" not in data
+
+    # Ticket in DB must remain untouched
+    db.session.refresh(ticket)
+    assert ticket.draft_reply is None
 
 
 def test_knowledge_base_endpoints(client, auth_headers):
@@ -175,4 +343,5 @@ def test_knowledge_base_endpoints(client, auth_headers):
     # Test 404 for nonexistent file or path traversal
     assert client.get("/api/knowledge-base/file/nonexistent.pdf", headers=auth_headers).status_code == 404
     assert client.get("/api/knowledge-base/file/../routes.py", headers=auth_headers).status_code == 404
+
 

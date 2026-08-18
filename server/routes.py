@@ -24,24 +24,29 @@ Every endpoint is wrapped in @require_auth, which provides g.user/g.is_admin.
 
 import json
 import os
+import re
 from datetime import date
 from flask import Blueprint, current_app, g, jsonify, request, send_from_directory
 from sqlalchemy import func
 
 from server.agent import resume_run, run_agent
 from server.auth import require_auth
+from server.hitl import execute_tool_with_hitl
 from server.llm import generate
 from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
+from server.tools import openai_tool_defs, validate_arguments
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.sanitization import reject_if_injection
-from server.utils import is_client_disconnected
+from server.utils import clean_draft_text, format_knowledge_answer, is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
     PIP_CLASSIFICATION_PROMPT,
-    PIP_SYSTEM_PROMPT,
+    PIP_GENERAL_SYSTEM_PROMPT,
+    PIP_SEARCH_KNOWLEDGE_SYSTEM_PROMPT,
+    PIP_DRAFT_SYSTEM_PROMPT,
     PIP_SYSTEM_PROMPT_NO_POLICY_MATCH,
 )
 
@@ -365,19 +370,32 @@ def confirm_run(run_id):
     action = PendingAction.query.filter_by(run_id=run.id, status="pending").first()
     outcome = resume_run(run, approved)
 
-    # On reject: if the ticket is still in_triage, reopen it so it is not stuck
-    if not approved and action is not None:
+    # Locate the target ticket from the action's arguments
+    target_ticket = None
+    if action is not None:
         raw_id = (action.arguments or {}).get("ticket_id")
         if raw_id is not None:
-            try:
-                clean_id = int(str(raw_id).replace("T-", "").replace("APX-", ""))
-            except (TypeError, ValueError):
-                clean_id = None
-            if clean_id is not None:
-                ticket = Ticket.query.filter_by(id=clean_id, user_id=g.user.id).first()
-                if ticket is not None and ticket.status == "in_triage":
-                    ticket.status = "open"
-                    db.session.commit()
+            clean_str = str(raw_id).replace("T-", "").replace("APX-", "").strip()
+            target_ticket = Ticket.query.filter(
+                (Ticket.id == clean_str) | (Ticket.ticket_number == str(raw_id)) | (Ticket.ticket_number == f"APX-{clean_str}"),
+                Ticket.user_id == g.user.id,
+            ).first()
+
+    # On reject: if the ticket is still in_triage, reopen it so it is not stuck
+    if not approved and target_ticket is not None and target_ticket.status == "in_triage":
+        target_ticket.status = "open"
+        db.session.commit()
+
+    # Weave final drafted reply from the resumed run into the ticket's draft reply
+    raw_ans = outcome.get("answer") or ""
+    clean_draft = clean_draft_text(raw_ans)
+    if target_ticket and clean_draft:
+        target_ticket.draft_reply = clean_draft
+        if target_ticket.status == "open":
+            target_ticket.status = "draft_pending"
+        db.session.commit()
+        outcome["draft_reply"] = clean_draft
+        outcome["ticket_id"] = target_ticket.id
 
     return jsonify(outcome)
 
@@ -760,6 +778,30 @@ def triage_ticket_endpoint(ticket_id):
             "answer": "Triage failed. Applied safe fallback draft.",
         }
 
+    if outcome.get("status") == "completed" and ticket.status != "escalated":
+        raw_ans = outcome.get("answer") or ""
+        cleaned_ans = clean_draft_text(raw_ans)
+        if cleaned_ans:
+            ticket.draft_reply = cleaned_ans
+            if ticket.status == "open":
+                ticket.status = "draft_pending"
+            db.session.commit()
+    elif (outcome.get("status") == "needs_confirmation" or ticket.status == "escalated") and not ticket.draft_reply:
+        requester_first = (ticket.requester_name or "there").split()[0].strip()
+        dept_str = ticket.requester_department or "HR Support"
+        draft_text = (
+            f"Hi {requester_first},\n\n"
+            f"Thank you for contacting ApexCare Support regarding '{ticket.title}'. "
+            f"I have escalated your request to our {dept_str} specialist team for review.\n\n"
+            f"Our team will follow up directly with you shortly with next steps.\n\n"
+            f"Best regards,\n"
+            f"HR Support Team"
+        )
+        ticket.draft_reply = draft_text
+        if ticket.status == "open":
+            ticket.status = "draft_pending"
+        db.session.commit()
+
     # Refresh ticket — the agent's tools may have changed it (draft, status).
     db.session.refresh(ticket)
     return jsonify({
@@ -937,35 +979,62 @@ def pip_chat():
     db.session.add(run)
     db.session.commit()
 
-    # Step 0.5: Classify query to see if it needs knowledge base search
-    # (skips the slow RAG round-trip for greetings/small talk).
-    step1 = RunStep(
-        run_id=run.id,
-        seq=1,
-        kind="llm_call",
-        result={"status": "classifying"}
-    )
-    db.session.add(step1)
-    db.session.commit()
+    # Hardcoded check / explicit flag for DRAFT mode.
+    # The ONLY time the draft route is triggered is explicitly when is_draft is True (e.g. "Draft with Pip" button clicked).
+    is_explicit_draft = bool(data.get("is_draft") is True or data.get("mode") == "draft")
 
-    needs_kb = True  # fail open: when unsure, search anyway
-    try:
-        classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
-        class_res = generate([{"role": "user", "content": classification_prompt}], tools=[])
-        class_content = (class_res.get("content") or "").strip().upper()
-        # Only skip the KB when the model UNambiguously said NO.
-        if "NO" in class_content and "YES" not in class_content:
-            needs_kb = False
-        step1.result = {"status": "classified", "needs_kb": needs_kb}
+    if is_explicit_draft:
+        route_flag = "DRAFT"
+        step1 = RunStep(
+            run_id=run.id,
+            seq=1,
+            kind="llm_call",
+            result={"status": "explicit_draft_flag", "route": "DRAFT"}
+        )
+        db.session.add(step1)
         db.session.commit()
-    except Exception as e:
-        step1.result = {"error": str(e)}
+    else:
+        # Step 0.5: Classify query strictly between CHITCHAT and SEARCH_KNOWLEDGE
+        step1 = RunStep(
+            run_id=run.id,
+            seq=1,
+            kind="llm_call",
+            result={"status": "classifying"}
+        )
+        db.session.add(step1)
         db.session.commit()
 
-    # Step 1: Knowledge Search
+        # Hardcoded guardrail: inquiries with explicit policy/work/benefit terms always search knowledge
+        has_knowledge_intent = bool(re.search(
+            r"\b(policy|policies|wfa|pto|fsa|hsa|benefit|benefits|rollover|limit|limits|coverage|deductible|navigator|qle|life event|std|ltd|insurance|401k|holiday|leave|medical|dental|vision|card|cards|replace|ticket|tickets|apx-|procedure|rules?|guidelines?|how (do|can|to|does)|what (is|are)|where (can|do|is)|tell me about)\b",
+            message_text,
+            re.IGNORECASE,
+        ))
+
+        route_flag = "SEARCH_KNOWLEDGE"
+        if not has_knowledge_intent:
+            try:
+                classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
+                class_res = generate([{"role": "user", "content": classification_prompt}], tools=[])
+                class_content = (class_res.get("content") or "").strip().upper()
+
+                if "CHITCHAT" in class_content or "GENERAL" in class_content or ("NO" in class_content and "YES" not in class_content):
+                    route_flag = "GENERAL"
+                else:
+                    route_flag = "SEARCH_KNOWLEDGE"
+            except Exception as e:
+                route_flag = "SEARCH_KNOWLEDGE"
+        else:
+            route_flag = "SEARCH_KNOWLEDGE"
+
+        step1.result = {"status": "classified", "route": route_flag}
+        db.session.commit()
+
+    # Step 1: Knowledge Search (always executed for SEARCH_KNOWLEDGE and DRAFT)
     kb_context = ""
+    kb_result = None
     no_policy_match = False
-    if needs_kb:
+    if route_flag in ("SEARCH_KNOWLEDGE", "DRAFT"):
         step2 = RunStep(
             run_id=run.id,
             seq=2,
@@ -980,8 +1049,6 @@ def pip_chat():
             kb_result = search_knowledge(message_text)
             if kb_result and "error" not in str(kb_result):
                 kb_context = f"\n\nAUDITED_POLICY_KNOWLEDGE_RESULT:\n{json.dumps(kb_result)}"
-                # search_knowledge instructs AnythingLLM to emit this exact
-                # sentinel when the documents don't cover the question.
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
@@ -989,22 +1056,32 @@ def pip_chat():
         except Exception as e:
             step2.result = {"error": str(e)}
             db.session.commit()
-    else:
-        # If knowledge search was skipped because query is playful/off-topic, treat it as no policy match
-        no_policy_match = True
 
-    # Assemble the final prompt: persona (+ no-match addendum) + tickets + KB.
-    system_prompt = PIP_SYSTEM_PROMPT
-    if no_policy_match:
-        system_prompt += PIP_SYSTEM_PROMPT_NO_POLICY_MATCH
+    # Step 2: Select the dedicated system prompt based on route_flag
+    if route_flag == "GENERAL":
+        system_prompt = PIP_GENERAL_SYSTEM_PROMPT
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message_text}
+        ]
+    elif route_flag == "DRAFT":
+        system_prompt = PIP_DRAFT_SYSTEM_PROMPT
+        messages = [
+            {"role": "system", "content": system_prompt + tickets_context + kb_context},
+            {"role": "user", "content": message_text}
+        ]
+    else:  # SEARCH_KNOWLEDGE
+        system_prompt = PIP_SEARCH_KNOWLEDGE_SYSTEM_PROMPT
+        if no_policy_match:
+            system_prompt += PIP_SYSTEM_PROMPT_NO_POLICY_MATCH
+        include_tickets = bool(re.search(r"\b(ticket|tickets|apx-|employee)\b", message_text, re.IGNORECASE))
+        t_ctx = tickets_context if include_tickets else ""
+        messages = [
+            {"role": "system", "content": system_prompt + t_ctx + kb_context},
+            {"role": "user", "content": message_text}
+        ]
 
-    messages = [
-        {"role": "system", "content": system_prompt + tickets_context + kb_context},
-        {"role": "user", "content": message_text}
-    ]
-
-    # Cancellation checks (same two signals the agent loop uses) before the
-    # expensive final generation...
+    # Cancellation checks before final generation
     if is_client_disconnected():
         current_app.logger.info("Chat generation aborted: client disconnected.")
         run.status = "stopped"
@@ -1016,11 +1093,12 @@ def pip_chat():
         current_app.logger.info("Chat generation aborted: run status set to stopped.")
         return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
-    # Step 2 (seq 3): compose the actual reply.
+    # Step 3: Compose the actual reply with explicitly guided output format
     step3 = RunStep(
         run_id=run.id,
         seq=3,
         kind="llm_call",
+        llm_messages=messages,
         result={"status": "formulating"}
     )
     db.session.add(step3)
@@ -1029,8 +1107,6 @@ def pip_chat():
     try:
         res = generate(messages, tools=[])
 
-        # ...and re-check after generation, before committing/returning
-        # (generation takes seconds; the user may have stopped meanwhile).
         if is_client_disconnected():
             current_app.logger.info("Chat generation aborted: client disconnected.")
             run.status = "stopped"
@@ -1044,11 +1120,79 @@ def pip_chat():
 
         content = res.get("content") or "I'm ready to assist you. Which ticket or policy question shall we tackle next?"
 
+        # 1. Clean and pre-render knowledge search queries if the LLM outputted raw tool JSON
+        is_fake_tool_call = (
+            content.strip().startswith("{")
+            and ("lookup_policy" in content or "search_knowledge" in content or "get_policy" in content)
+        )
+        sources_list = kb_result.get("sources") if (kb_result and isinstance(kb_result, dict)) else None
+        if route_flag == "SEARCH_KNOWLEDGE":
+            if is_fake_tool_call or (kb_result and kb_result.get("answer") and content.strip().startswith("{")):
+                if kb_result and kb_result.get("answer"):
+                    content = format_knowledge_answer(kb_result.get("answer"), sources_list)
+            else:
+                content = format_knowledge_answer(content, sources_list)
+
+        # 2. Match target ticket & assign draft when in DRAFT route
+        target_ticket = None
+        extracted_draft = None
+
+        if route_flag == "DRAFT":
+            cleaned = clean_draft_text(content)
+            extracted_draft = cleaned or content
+            content = extracted_draft
+
+            requested_ticket_id = data.get("ticket_id")
+            if requested_ticket_id:
+                clean_req = str(requested_ticket_id).replace("APX-", "").replace("T-", "").strip().upper()
+                for t in active_tickets:
+                    clean_num = str(t.ticket_number or "").replace("APX-", "").replace("T-", "").strip().upper()
+                    if (
+                        str(t.id) == str(requested_ticket_id)
+                        or str(t.id) == clean_req
+                        or str(t.ticket_number or "").upper() == str(requested_ticket_id).upper()
+                        or (clean_num and clean_num == clean_req)
+                    ):
+                        target_ticket = t
+                        break
+
+            if not target_ticket:
+                for t in active_tickets:
+                    if t.ticket_number and t.ticket_number.lower() in message_text.lower():
+                        target_ticket = t
+                        break
+                    if t.requester_name and t.requester_name.lower() in message_text.lower():
+                        target_ticket = t
+                        break
+                    if t.requester_name:
+                        first_name = t.requester_name.split()[0].lower()
+                        if len(first_name) >= 3 and first_name in message_text.lower():
+                            target_ticket = t
+                            break
+
+            if not target_ticket and len(active_tickets) == 1:
+                target_ticket = active_tickets[0]
+
+            if target_ticket and extracted_draft:
+                target_ticket.draft_reply = extracted_draft
+                if target_ticket.status == "open":
+                    target_ticket.status = "draft_pending"
+                db.session.commit()
+
         step3.result = {"content": content}
         run.status = "completed"
         db.session.commit()
 
-        return jsonify({"reply": content, "run_id": run.id})
+        resp_payload = {
+            "reply": content,
+            "status": "completed",
+            "run_id": run.id,
+            "route": route_flag,
+        }
+        if route_flag == "DRAFT" and target_ticket and extracted_draft:
+            resp_payload["draft_reply"] = extracted_draft
+            resp_payload["ticket_id"] = target_ticket.id
+        return jsonify(resp_payload)
     except Exception as e:
         # The generate() call itself failed. A stop/disconnect racing with the
         # failure still wins and reports "stopped" rather than an error.
