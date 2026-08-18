@@ -34,6 +34,26 @@ def expand_knowledge_query(query: str) -> str:
     return q
 
 
+def extract_core_search_query(query: str) -> str:
+    """Extract the actual policy question from ticket wrapper text or draft requests."""
+    if not query or not isinstance(query, str):
+        return ""
+    q = query.strip()
+    m = re.search(r'\"([^\"]+)\"', q)
+    if m:
+        extracted = m.group(1).strip()
+        extracted = re.sub(r"^(hi|hello)\s+(hr\s*team|hr|team|all)[,\.\!]?\s*", "", extracted, flags=re.IGNORECASE).strip()
+        if len(extracted) > 10:
+            return extracted
+    cleaned = re.sub(
+        r"^(help me (write a draft reply|draft a reply|answer)|draft a reply to|can you tell me)\s+(to\s+[^:]+:\s*)?",
+        "",
+        q,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned
+
+
 def search_knowledge(query):
     """Query the AnythingLLM workspace with expanded query. Returns {"answer", "sources"} or {"error"}.
 
@@ -47,18 +67,8 @@ def search_knowledge(query):
         f"/api/v1/workspace/{cfg['ANYTHINGLLM_WORKSPACE']}/chat"
     )
 
-    expanded_query = expand_knowledge_query(query)
-
-    # Direct AnythingLLM to synthesize answers from context but fail gracefully if absent.
-    instructed_message = (
-        f"User Query: {expanded_query}\n\n"
-        "System Instruction: Answer the user's query using ONLY the provided document context. "
-        "Review the context carefully to find relevant policy details, guidelines, or procedures. "
-        "You may synthesize and summarize the provided text to directly address the query. "
-        "If the provided documents do not contain enough relevant information to answer the question, "
-        "you must reply exactly with 'NO_POLICY_MATCH: Information not found in policy documents.' "
-        "Do not rely on outside knowledge or make assumptions beyond what is written."
-    )
+    core_query = extract_core_search_query(query)
+    clean_message = core_query if core_query else query.strip()
 
     # Failures return {"error": ...} instead of raising: the agent loop treats
     # that as an observation the model can react to (e.g. escalate), and
@@ -67,7 +77,7 @@ def search_knowledge(query):
     try:
         resp = requests.post(
             url,
-            json={"message": instructed_message, "mode": "query"},
+            json={"message": clean_message, "mode": "query"},
             headers={"Authorization": f"Bearer {cfg['ANYTHINGLLM_API_KEY']}"},
             timeout=timeout_val,  # tool timeout guardrail (minimum 180s for local LLMs)
         )
@@ -83,5 +93,28 @@ def search_knowledge(query):
     data = resp.json()
     # Flatten the source objects to display names for the trace panel.
     sources = [s.get("title") or s.get("url") or "unknown" for s in data.get("sources", [])]
+    answer_text = (data.get("textResponse") or "").strip()
 
-    return {"answer": data.get("textResponse", ""), "sources": sources}
+    # Detect legitimate no-match conditions from the RAG service
+    no_match_phrases = [
+        "there is no relevant information in this workspace",
+        "no relevant information in this workspace",
+        "there is no relevant information",
+        "no_policy_match",
+        "not found in policy documents",
+        "not found in the provided documents",
+        "do not contain any information",
+        "cannot find any information",
+        "no information is provided",
+        "no information available",
+        "does not mention",
+        "not mentioned in the context",
+        "no relevant information",
+    ]
+    if (not sources and not answer_text) or any(phrase in answer_text.lower() for phrase in no_match_phrases):
+        return {
+            "answer": "NO_POLICY_MATCH: Information not found in policy documents.",
+            "sources": sources,
+        }
+
+    return {"answer": answer_text, "sources": sources}

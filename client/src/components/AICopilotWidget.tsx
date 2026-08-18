@@ -17,6 +17,8 @@ interface AICopilotWidgetProps {
   onBotThinkingChange?: (isThinking: boolean) => void;
   pendingDraftQuery?: string | null;
   onClearPendingDraftQuery?: () => void;
+  onTicketUpdated?: () => void;
+  onDraftGenerated?: (draftText: string, ticketId?: number) => void;
 }
 
 interface ChatMessage {
@@ -25,6 +27,32 @@ interface ChatMessage {
   text: string;
   timestamp: string;
   tools?: ToolActivity[];
+}
+
+export function extractCleanDraft(text: string): string {
+  if (!text) return "";
+  let trimmed = text.trim();
+  if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
+    trimmed = trimmed.replace(/^```[a-zA-Z]*\n?/, "").replace(/\n?```$/, "").trim();
+  }
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const body =
+        parsed?.parameters?.reply?.body ||
+        parsed?.parameters?.body ||
+        parsed?.reply?.body ||
+        parsed?.body ||
+        parsed?.draft_reply ||
+        parsed?.draft ||
+        (typeof parsed?.reply === "string" ? parsed.reply : null);
+      if (typeof body === "string") return extractCleanDraft(body);
+    } catch {
+      // ignore
+    }
+  }
+
+  return trimmed;
 }
 
 export const CopyButton: React.FC<{ text: string }> = ({ text }) => {
@@ -92,10 +120,15 @@ export const CopyButton: React.FC<{ text: string }> = ({ text }) => {
 
 export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   user,
+  activeTicket,
+  tickets = [],
+  latestRun,
   isProcessing,
   onBotThinkingChange,
   pendingDraftQuery,
   onClearPendingDraftQuery,
+  onTicketUpdated,
+  onDraftGenerated,
 }) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -191,7 +224,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
   // Handle incoming draft query from Draft with Pip button
   useEffect(() => {
     if (pendingDraftQuery && pendingDraftQuery.trim()) {
-      handleSendChatMessage(pendingDraftQuery);
+      handleSendChatMessage(pendingDraftQuery, true);
       onClearPendingDraftQuery?.();
     }
   }, [pendingDraftQuery]);
@@ -222,7 +255,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
 
   const status = getPipStatus();
 
-  const handleSendChatMessage = async (queryText?: string) => {
+  const handleSendChatMessage = async (queryText?: string, isExplicitDraft?: boolean) => {
     const textToSend = queryText || inputMessage;
     if (!textToSend.trim()) return;
 
@@ -264,6 +297,9 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       }
     }, 200);
 
+    // The ONLY time the draft flag is triggered is explicitly when the "Draft with Pip" button is clicked
+    const isDraft = Boolean(isExplicitDraft);
+
     try {
       const token = localStorage.getItem("apexcare_token");
       const res = await fetch("/api/chat", {
@@ -272,17 +308,34 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ message: textToSend }),
+        body: JSON.stringify({
+          message: textToSend,
+          ticket_id: activeTicket?.id,
+          is_draft: isDraft,
+        }),
         signal: controller.signal,
       });
 
       let answerText = "";
       let completedRunId: number | null = null;
+
       if (res.ok) {
         const data = await res.json();
-        answerText = data.reply;
         completedRunId = data.run_id;
         setActiveRunId(data.run_id);
+
+        const rawReply = data.reply || "";
+        const isRawDraftJson = rawReply.trim().startsWith("{") && rawReply.includes("draft_replies");
+        if (data.draft_reply || isRawDraftJson) {
+          const finalDraft = extractCleanDraft(data.draft_reply || rawReply);
+          answerText = finalDraft || rawReply;
+          if (finalDraft) {
+            onDraftGenerated?.(finalDraft, data.ticket_id || activeTicket?.id);
+            onTicketUpdated?.();
+          }
+        } else {
+          answerText = rawReply;
+        }
 
         // Flash "completed" state with celebration stars briefly upon success!
         setStatusOverride("completed");
@@ -339,6 +392,19 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
         answerText = `I'm fully operational and performing at 100%! Ready to get to work—which support ticket should we review today?`;
       } else if (lower.includes("hi") || lower.includes("hello") || lower.includes("hey")) {
         answerText = `Hello ${user.full_name.split(" ")[0]}! Ready to assist. What support ticket or policy inquiry can I help you with today?`;
+      } else if (lower.includes("draft") || lower.includes("write a reply") || lower.includes("compose a reply") || lower.includes("help me write")) {
+        const reqName = activeTicket?.requester_name?.split(" ")[0] || "there";
+        let fallbackDraft = "";
+        if (lower.includes("vpn")) {
+          fallbackDraft = `Hi ${reqName},\n\nPlease reset your VPN token at vpn.apexcare.tech and reinstall the GlobalProtect certificate per IT security guidelines.\n\nBest regards,\nHR Support Team`;
+        } else if (lower.includes("fsa") || lower.includes("wex")) {
+          fallbackDraft = `Hi ${reqName},\n\nAccording to ApexCare policy, up to $640 in unused Healthcare FSA funds can roll over into 2026. Claims can be submitted via the Wex Mobile app.\n\nBest regards,\nHR Support Team`;
+        } else {
+          fallbackDraft = `Hi ${reqName},\n\nThank you for reaching out to HR Support. Your inquiry regarding "${activeTicket?.title || "your ticket"}" has been reviewed per official ApexCare policy.\n\nPlease let us know if you need any additional assistance.\n\nBest regards,\nHR Support Team`;
+        }
+        answerText = `I have inserted this response in the reply chat:\n\n"${fallbackDraft}"`;
+        onDraftGenerated?.(fallbackDraft, activeTicket?.id);
+        onTicketUpdated?.();
       } else if (lower.includes("fsa") || lower.includes("wex")) {
         answerText =
           "Based on our audited WEX Benefits Policy (wex_benefits_technology_guide.md): Healthcare FSA funds allow up to $640 in unused funds to roll over into 2026. Claims can be submitted via the Wex Mobile app. What shall we tackle next?";
@@ -406,10 +472,10 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
       </div>
 
       {/* Content Area - Live AI Chatbot Panel */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 flex flex-col justify-between">
-        <div className="flex-1 flex flex-col justify-between space-y-3">
+      <div className="flex-1 overflow-hidden p-4 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0">
           {/* Chat Messages Timeline */}
-          <div className="space-y-3 overflow-y-auto max-h-[380px] custom-scrollbar pr-1">
+          <div className="flex-1 space-y-3 overflow-y-auto custom-scrollbar pr-1 min-h-0 pb-2">
             {chatMessages.map((msg) => {
               if (msg.sender === "system") {
                 return (
@@ -463,27 +529,31 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           </div>
 
           {/* Quick Policy Chips & Chat Input Box */}
-          <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 custom-scrollbar text-[10px]">
+          <div className="space-y-2.5 pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+            <div className="flex items-center gap-2 p-1.5 overflow-x-auto custom-scrollbar text-[11px]">
               <button
+                type="button"
+                disabled={isBotThinking}
+                onClick={() => handleSendChatMessage("Tell me about the WFA policy")}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                💬 WFA Policy
+              </button>
+              <button
+                type="button"
+                disabled={isBotThinking}
                 onClick={() => handleSendChatMessage("What is our WEX FSA rollover limit?")}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 💬 FSA Policy
               </button>
               <button
+                type="button"
+                disabled={isBotThinking}
                 onClick={() => handleSendChatMessage("How do employees replace medical ID cards?")}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 💬 Medical IDs
-              </button>
-              <button
-                onClick={() =>
-                  handleSendChatMessage("How do I report a Qualifying Life Event in Employee Navigator?")
-                }
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold whitespace-nowrap cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                💬 Life Events
               </button>
             </div>
 
@@ -496,7 +566,8 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
             >
               <textarea
                 rows={1}
-                placeholder="Ask Pip any policy question..."
+                disabled={isBotThinking}
+                placeholder={isBotThinking ? "Pip is thinking..." : "Ask Pip any policy question..."}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={(e) => {
@@ -505,7 +576,7 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
                     handleSendChatMessage();
                   }
                 }}
-                className="flex-1 px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-y-auto max-h-24 custom-scrollbar font-medium"
+                className="flex-1 px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-y-auto max-h-24 custom-scrollbar font-medium disabled:opacity-50 disabled:bg-slate-200/60 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed"
               />
               {isBotThinking ? (
                 <button

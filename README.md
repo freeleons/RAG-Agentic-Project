@@ -9,23 +9,76 @@
 
 > **ApexCare** is a production-grade, multi-tenant **Autonomous AI Support Triage Agent** and **RAG Knowledge Service** designed to assist enterprise HR and IT operations. Built from first principles using Python/Flask and React (TypeScript), it implements a customized **bounded reasoning loop**, **stateful Human-in-the-Loop (HITL) execution safety**, **prompt injection defense boundaries**, and a decorator-driven **observability & analytics system** to deliver auditability at scale.
 
+<details>
+  <summary><b>📑 Table of Contents (Click to expand)</b></summary>
+
+  - [🎥 Demos & Visual Showcase](#-demos--visual-showcase)
+  - [🏗️ System Architecture](#️-system-architecture)
+  - [🌟 Key Engineering Highlights](#-key-engineering-highlights)
+  - [🛡️ AI Safety & Prompt Injection Protection](#️-ai-safety--prompt-injection-protection)
+  - [🛠️ Tech Stack](#️-tech-stack)
+  - [🧭 Claude Code Harness (`.claude/`)](#-claude-code-harness-claude)
+  - [🚀 Quick Start & Installation](#-quick-start--installation)
+  - [🧪 Testing & Validation](#-testing--validation)
+  - [👥 Authors & Team](#-authors--team)
+  - [📄 License](#-license)
+</details>
+
 ---
 
 ## 🎥 Demos & Visual Showcase
 
 > [!TIP]
-> **Core Concept:** Rather than leaving the support specialist in a generic chat interface, ApexCare introduces a unified **Ticket Triage Workbench** dashboard. The agent acts as an embedded assistant directly grounding replies with policy retrieval, compiling draft responses, and routing escalations, with every reasoning step audited and trace-logged.
+> **Core Concept:** Rather than leaving the support specialist in a generic chat interface, ApexCare introduces a unified **Ticket Triage Workbench** dashboard. The agent acts as an embedded assistant directly grounding replies with policy retrieval and compiling draft responses, with every reasoning step audited and trace-logged.
 
-### 📸 Triage Workbench Interface
+### 🎬 Live Demo: Copilot Policy Grounding & Reply Drafting
 <div align="center">
-  <img src="./docs/images/chat-trace-screenshot.png" alt="Chat & Agent Trace Panel" width="90%" style="border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);" />
-  <p><i>The central Triage Workbench view with live sidebar tickets, active workbench details, and the collapsible AI Copilot widget on the right.</i></p>
+  <img src="./assets/draft-with-pip-demo.webp" alt="Draft with Pip Live Demo" width="92%" style="border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);" />
+  <p><i>Live demonstration: Triggering "Draft with Pip" on an active ticket, retrieving grounded policy knowledge via RAG, streaming intermediate reasoning steps, and copying the generated draft directly into the reply editor.</i></p>
 </div>
 
-### 📸 System Analytics & Observability Dashboard
+<br/>
+
+### 🤖 Pip Assistant: 3-in-1 Copilot Capabilities
 <div align="center">
-  <img src="./docs/images/audit-dashboard-screenshot.png" alt="Observability & Audit Dashboard" width="90%" style="border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);" />
-  <p><i>The Admin Observability panel displaying token consumption trends, average step latencies, failure rates, and step-by-step telemetry traces.</i></p>
+  <img src="./assets/pip_chat.webp" alt="Pip Assistant Copilot" width="48%" style="border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);" />
+</div>
+
+The embedded **Pip Assistant** serves as an intelligent sidekick equipped with three primary operational modes:
+* **💬 1. General HR/IT Q&A:** Direct conversational reasoning to answer specialist queries and troubleshoot edge cases.
+* **🔍 2. Autonomous Knowledge Base Search:** Triggers the `search_knowledge` tool to semantically retrieve relevant sections from indexed policy documents with live execution traces.
+* **✍️ 3. Grounded Reply Drafting:** Synthesizes policy constraints into polite, structured customer responses with one-click **"Copy"** and direct workbench integration.
+
+<br/>
+
+### 📚 Policy Knowledge Base & RAG Retrieval
+<div align="center">
+  <img src="./assets/knowledge_base.webp" alt="Policy Knowledge Base Viewer" width="92%" style="border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);" />
+  <p><i>Interactive Knowledge Base viewer displaying company policies (Markdown & PDFs) synchronized and indexed into the AnythingLLM vector engine.</i></p>
+</div>
+
+<br/>
+
+### 📊 System Analytics & Observability Dashboard
+<div align="center">
+  <img src="./assets/audit_logs.webp" alt="Observability & Audit Dashboard" width="92%" style="border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);" />
+  <p><i>Real-time observability panel monitoring agent execution latency distributions, token volume consumption, success rates, and granular step-by-step traces.</i></p>
+</div>
+
+<br/>
+
+### 🔐 Authentication & Recruiter 1-Click Demo Mode
+<div align="center">
+  <img src="./assets/auth.webp" alt="Sign In & Recruiter Demo Mode" width="92%" style="border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);" />
+  <p><i>Authentication portal equipped with an instant "Recruiter Demo Mode" button to launch the live demo environment immediately with pre-loaded tickets.</i></p>
+</div>
+
+<br/>
+
+### 🧭 Interactive Guided Tour & Onboarding
+<div align="center">
+  <img src="./assets/tutorial.webp" alt="Guided Interactive Tutorial" width="92%" style="border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);" />
+  <p><i>Interactive walkthrough modal guiding new specialists through ticket selection, Pip Copilot drafting, and knowledge exploration.</i></p>
 </div>
 
 ---
@@ -210,12 +263,43 @@ npm test -- --run
 
 ---
 
-## 📄 License & Contact
+## 👥 Authors & Team
 
-Distributed under the **MIT License**.
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <a href="https://github.com/freeleons">
+        <img src="./assets/jue.webp" width="120" alt="Jameson Wang" /><br />
+        <sub><b>Jameson Wang</b></sub>
+      </a>
+      <br />
+      <a href="https://github.com/freeleons"><img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" /></a>
+      <a href="https://www.linkedin.com/in/freeleons/"><img src="https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn" /></a>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://github.com/shuziyoshi">
+        <img src="./assets/shuzi.webp" width="120" alt="Wendy Gong" /><br />
+        <sub><b>Wendy Gong</b></sub>
+      </a>
+      <br />
+      <a href="https://github.com/shuziyoshi"><img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" /></a>
+      <a href="https://www.linkedin.com/in/yoshi-gong/"><img src="https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn" /></a>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://github.com/ddgiovinazzo">
+        <img src="./assets/daniel.webp" width="120" alt="Daniel Giovinazzo" /><br />
+        <sub><b>Daniel Giovinazzo</b></sub>
+      </a>
+      <br />
+      <a href="https://github.com/ddgiovinazzo"><img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub" /></a>
+      <a href="https://www.linkedin.com/in/ddgiovinazzo/"><img src="https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn" /></a>
+    </td>
+  </tr>
+</table>
 
-Designed & built by **Developer / AI Engineer** demonstrating production AI systems engineering.
+---
 
-* **Email:** developer@example.com *(Replace with your email)*
-* **LinkedIn:** [linkedin.com/in/yourprofile](https://linkedin.com/in/yourprofile) *(Replace with your profile)*
-* **Portfolio:** [yourportfolio.dev](https://yourportfolio.dev) *(Replace with your portfolio)*
+## 📄 License
+
+Distributed under the **MIT License**. See [`LICENSE`](./LICENSE) for details.
+

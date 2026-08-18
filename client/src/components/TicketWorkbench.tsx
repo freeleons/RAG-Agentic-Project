@@ -81,8 +81,8 @@ export const TicketWorkbench: React.FC<TicketWorkbenchProps> = ({
       return;
     }
 
-    // 3. Fallback for draft_pending status or open tickets
-    if (ticket.status === "draft_pending" && ticket.draft_reply) {
+    // 3. Fallback whenever ticket has a draft_reply
+    if (ticket.draft_reply) {
       setReplyInput(ticket.draft_reply);
       setTicketDrafts((prev) => ({ ...prev, [ticket.id]: ticket.draft_reply! }));
       lastSeenDrafts.current[ticket.id] = ticket.draft_reply;
