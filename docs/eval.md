@@ -22,6 +22,16 @@ How we measure whether the agent actually works — not just "it ran once."
 
 For each task record: **success / partial / fail**, the **number of steps** taken, and whether it used the **right tools**. Fewer steps + right tools = a healthier agent. When a task fails, your observability log tells you *where* (wrong tool, bad arguments, bad final answer).
 
+### Automated harness (optional, complements the manual pass)
+
+`server/eval/run_eval.py` runs this same task set through the real retrieval + generation pipeline and scores each result with an LLM judge on the standard RAG metric split — **retrieval hit** (did `search_knowledge` return a real match, not `NO_POLICY_MATCH`) plus **faithfulness**, **answer relevance**, and **answer correctness** (0.0–1.0 each) on the generated answer. It's an offline dev tool, not wired into the app, the DB, or CI — run it manually after prompt/tool/model changes, same trigger as the manual pass above:
+
+```bash
+python -m server.eval.run_eval
+```
+
+Results print as a table and get written to `server/eval/last_run.json` (gitignored — regenerate, don't commit). The golden set lives in `server/eval/golden_set.py`, mirrored by hand from the table above — keep the two in sync when you add a task.
+
 ## Run log
 
 Re-run the whole set after changing the prompt, the tool descriptions, or the model.
