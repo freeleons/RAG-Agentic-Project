@@ -78,3 +78,24 @@ def test_search_knowledge_handles_timeout(app, monkeypatch):
     from server.tools.search_knowledge import search_knowledge
 
     assert "error" in search_knowledge("x")
+
+
+def test_expand_knowledge_query():
+    from server.tools.search_knowledge import expand_knowledge_query
+
+    assert expand_knowledge_query("") == ""
+    assert expand_knowledge_query(None) == ""
+
+    # Expands guardian sales office / regulator terms
+    expanded = expand_knowledge_query("guardian sales office address")
+    assert "Maple Lawn" in expanded
+    assert "Bureau of Insurance" in expanded
+
+    # Expands WFA terms
+    wfa_expanded = expand_knowledge_query("what is the wfa policy?")
+    assert "Work From Anywhere" in expanded or "Work From Anywhere" in wfa_expanded
+
+    # Unmatched query stays as-is
+    plain = expand_knowledge_query("unknown random topic")
+    assert plain == "unknown random topic"
+
