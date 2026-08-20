@@ -1,6 +1,10 @@
 """The golden task set, mirrored from docs/eval.md as structured data so
 run_eval.py can iterate over it. Keep this in sync with the table there by
 hand — it's small enough that duplicating it isn't worth a markdown parser.
+
+中文：黄金任务集，从 docs/eval.md 那张表手动搬过来的结构化数据，方便
+run_eval.py 遍历。跟那张表保持同步靠手动维护——就 9 条，量太小，不值得
+为它专门写个 markdown 解析器。
 """
 
 GOLDEN_SET = [
