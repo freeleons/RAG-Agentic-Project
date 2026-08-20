@@ -263,9 +263,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                               (kind is still "tool_call" in the DB — this is a display-only distinction,
                               mirroring the OTel GenAI convention that retrieval is its own span kind)
                               instead of the generic "Tool Execution" label used for every other tool.
-                              中文：search_knowledge 这一步单独标成"Retrieval"（数据库里 kind 依旧是
-                              "tool_call"，这只是展示层的区分，呼应 OTel GenAI 语义约定里检索是独立的
-                              span 类型），不再和其他工具混用通用的"Tool Execution"标签。 */}
+                               */}
                           <span className="font-bold text-blue-700 dark:text-blue-400">
                             Seq #{step.seq} — {step.kind === "llm_call" ? "🤖 LLM Reasoning Call" : step.tool_name === "search_knowledge" ? "🔍 Retrieval" : "🛠️ Tool Execution"}
                           </span>
