@@ -92,7 +92,24 @@ def search_knowledge(query):
 
     data = resp.json()
     # Flatten the source objects to display names for the trace panel.
+  
     sources = [s.get("title") or s.get("url") or "unknown" for s in data.get("sources", [])]
+    # Keep the per-chunk score too, in the same order AnythingLLM returned
+    # them (highest-similarity first) — this is the rank + relevance-score
+    # data Context Precision needs, and it used to be thrown away here.
+
+    # "text" is included too: all chunks from one document share the same
+    # title, so title alone can't tell a per-chunk relevance judge anything —
+    # it needs the actual retrieved passage.
+   
+    chunks = [
+        {
+            "title": s.get("title") or s.get("url") or "unknown",
+            "score": s.get("score"),
+            "text": s.get("text"),
+        }
+        for s in data.get("sources", [])
+    ]
     answer_text = (data.get("textResponse") or "").strip()
 
     # Detect legitimate no-match conditions from the RAG service
@@ -115,6 +132,7 @@ def search_knowledge(query):
         return {
             "answer": "NO_POLICY_MATCH: Information not found in policy documents.",
             "sources": sources,
+            "chunks": chunks,
         }
 
-    return {"answer": answer_text, "sources": sources}
+    return {"answer": answer_text, "sources": sources, "chunks": chunks}

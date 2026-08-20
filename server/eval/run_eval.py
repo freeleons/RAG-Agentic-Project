@@ -5,10 +5,16 @@ generation pipeline (mirrors server/routes.py's pip_chat SEARCH_KNOWLEDGE
 path) and scores each result with an LLM judge on the standard RAG metric
 split:
 
-  Retriever quality  -> approximated by whether search_knowledge actually
-                        returned a non-NO_POLICY_MATCH result (full Context
-                        Precision/Recall needs a labeled chunk-level golden
-                        set we don't have yet; this is a coarser proxy).
+  Retriever quality  -> retrieval_hit (did search_knowledge return a real
+                        match at all) plus context_precision (are the
+                        matched chunks ranked with the relevant ones near
+                        the top — reciprocal-rank-weighted; each chunk's
+                        relevance is judged individually by a local Ollama
+                        model, see judge_chunk_relevance).
+                        Context Recall is NOT implemented: it needs the
+                        golden `expected` answers broken into individual
+                        claims to check which ones the retrieved context
+                        supports, and we don't have that claim-level data.
   Generator quality  -> Faithfulness, Answer Relevance, Answer Correctness,
                         scored 0.0-1.0 by a judge LLM call.
 
@@ -16,29 +22,12 @@ Not wired into the live app, the DB, or CI. Run manually after prompt/tool/
 model changes, same trigger as the manual pass documented in docs/eval.md:
 
     python -m server.eval.run_eval
-
-中文：离线的 RAGAS 风格评测脚本（最小可行版本）。
-
-把 docs/eval.md 里的黄金任务集，跑一遍真实的检索+生成流程（照搬
-server/routes.py 里 pip_chat 的 SEARCH_KNOWLEDGE 分支逻辑），然后用一次
-judge LLM 调用，按标准 RAG 指标体系给每条结果打分：
-
-  检索质量（Retriever）-> 用 search_knowledge 有没有返回非 NO_POLICY_MATCH
-                          的结果来近似（完整的 Context Precision/Recall
-                          需要按文本块打标的黄金集，我们现在还没有，这是
-                          个粗粒度的替代指标）。
-  生成质量（Generator）-> Faithfulness（忠实度）、Answer Relevance（回答
-                          相关性）、Answer Correctness（回答正确性），
-                          由 judge LLM 打 0.0~1.0 的分。
-
-没有接入线上服务、数据库或 CI，是纯手动跑的开发工具，触发时机跟 docs/eval.md
-里那份人工评测一样——改了 prompt/工具/模型之后手动跑一次：
-
-    python -m server.eval.run_eval
 """
 
 import json
 import sys
+
+from flask import current_app
 
 from server.app import create_app
 from server.eval.golden_set import GOLDEN_SET
@@ -49,12 +38,69 @@ from server.prompts import (
 )
 from server.tools.search_knowledge import search_knowledge
 
+# judge call on a free local model instead (see judge_chunk_relevance below).
+
+CHUNK_RELEVANCE_MODEL = "llama3.2:1b"
+CHUNK_RELEVANCE_PROMPT = """Does this document excerpt help answer the question? Reply with exactly one word, YES or NO.
+
+QUESTION: {question}
+
+EXCERPT: {excerpt}
+
+Answer (YES or NO only):"""
+
+
+def judge_chunk_relevance(question, chunk_text):
+    """One local-Ollama call: is this single retrieved chunk relevant to the question?
+
+    Deliberately routed to a free, tiny local model (via generate()'s model/
+    base_url overrides) instead of the app's configured paid model — this
+    runs once per retrieved chunk (up to 4x per golden-set item), and a
+    plain yes/no relevance call doesn't need frontier reasoning.
+    """
+    excerpt = (chunk_text or "")[:800]  # keep the tiny model's prompt short and fast
+    prompt = CHUNK_RELEVANCE_PROMPT.format(question=question, excerpt=excerpt)
+    ollama_base = current_app.config["OLLAMA_BASE_URL"].rstrip("/") + "/v1"
+    res = generate(
+        [{"role": "user", "content": prompt}],
+        tools=[],
+        model=CHUNK_RELEVANCE_MODEL,
+        base_url=ollama_base,
+    )
+    answer = (res.get("content") or "").strip().upper()
+    return 1 if answer.startswith("YES") else 0
+
+
+def context_precision(relevances):
+    """Reciprocal-rank-weighted precision over a list of per-chunk relevance labels.
+
+    Context Precision = sum_k(relevance_k * (1 / rank_k)) / total_relevant_chunks
+
+    `relevances` is a 0/1 list in the same order AnythingLLM returned the
+    chunks (already sorted highest-similarity first, so index+1 is the rank).
+    Returns None when there's nothing to score (no chunks) or nothing
+    relevant was found (denominator would be zero) — None prints as "?",
+    distinct from a real 0.0.
+    """
+    if not relevances:
+        return None
+    total_relevant = sum(relevances)
+    if total_relevant == 0:
+        return None
+    weighted_sum = sum(rel * (1.0 / rank) for rank, rel in enumerate(relevances, start=1))
+    return round(weighted_sum / total_relevant, 3)
+
+
 # Judge prompt: scores Faithfulness / Answer Relevance / Answer Correctness
 # (the Generator-side half of the RAG metric split) against the retrieved
 # context and the golden expected outcome.
-# 中文：judge 提示词——对着检索到的上下文和黄金期望结果，打 Faithfulness /
-# Answer Relevance / Answer Correctness 这三个分（对应 RAG 指标体系里
-# Generator 那一侧）。
+# Note on answer_relevance:  NOT RAGAS's actual formula (generate n
+# candidate questions from the answer, embed them, then average the cosine
+# similarity against the original question). That needs an embedding model
+# and n+1 extra LLM calls per item. This is a cheaper LLM-as-judge stand-in:
+# one call, the judge reads the question/answer pair and scores directly.
+# Same thing it's meant to catch (off-topic answers, evasive non-answers,
+# padded preambles) but the score is a subjective judgment call.
 JUDGE_PROMPT = """You are grading one turn of a RAG support agent. Score three metrics from
 0.0 to 1.0 (one decimal place):
 
@@ -83,9 +129,7 @@ def run_pipeline(goal):
     """Reproduce routes.py's SEARCH_KNOWLEDGE path: retrieve, then generate
     the final answer from the same system prompt + context shape.
 
-    中文：照搬 routes.py 里 SEARCH_KNOWLEDGE 那条分支的逻辑——先检索，
-    再用同样的 system prompt + context 拼装方式生成最终答案，保证评测的
-    是真实生产路径，而不是另一套简化逻辑。
+
     """
     kb_result = search_knowledge(goal)
     kb_context = ""
@@ -109,11 +153,6 @@ def run_pipeline(goal):
 
 def judge(question, context, answer, expected):
     """Ask the judge LLM to score faithfulness/relevance/correctness.
-
-    中文：调一次 judge LLM，给 faithfulness/answer_relevance/answer_correctness
-    打分。如果它没按要求吐纯 JSON（模型偶尔会加解释文字），三项分数都记为
-    None 而不是崩掉——None 在打印和 JSON 输出里都会显示成"?"，方便一眼看出
-    是"没打到分"而不是被误判成 0.0（真的答错）。
     """
     prompt = JUDGE_PROMPT.format(question=question, context=context, answer=answer, expected=expected)
     res = generate([{"role": "user", "content": prompt}], tools=[])
@@ -129,49 +168,52 @@ def main():
     # this eval harness cares about retrieval+generation quality, not the
     # auth/session layer, so calling the underlying functions directly
     # avoids needing a login token and a running Flask/Vite dev server.
-    # 中文：这里自建 app + app_context，而不是打真实的 HTTP 接口——这套评测
-    # 只关心检索+生成的质量，不关心鉴权/会话那一层，直接调底层函数可以不用
-    # 登录 token，也不依赖 Flask/Vite 开发服务器是不是正在跑。
+  
     app = create_app()
     results = []
     with app.app_context():
         for item in GOLDEN_SET:
             kb_result, answer = run_pipeline(item["goal"])
             context = kb_result.get("answer", "") if isinstance(kb_result, dict) else str(kb_result)
-            # retrieval_hit is the coarse Retriever-quality proxy described in
-            # the module docstring — real Context Precision/Recall would need
-            # a chunk-level golden set we don't have.
-            # 中文：retrieval_hit 就是模块开头说的那个粗粒度检索质量近似值；
-            # 真正的 Context Precision/Recall 需要按文本块打标的黄金集，
-            # 现在还没有。
+            # retrieval_hit: did search_knowledge return a real match at all
+            # (coarsest possible Retriever-quality signal).
+           
             retrieval_hit = bool(kb_result) and "NO_POLICY_MATCH" not in str(kb_result.get("answer", ""))
+            # context_precision: of the chunks that *were* retrieved, are the
+            # relevant ones ranked near the top? Judge each chunk individually
+            # (local Ollama, cheap) for real relevance labels, then weight by
+            # reciprocal rank 
+           
+            chunks = kb_result.get("chunks", []) if isinstance(kb_result, dict) else []
+            relevances = [judge_chunk_relevance(item["goal"], c.get("text")) for c in chunks]
+            precision = context_precision(relevances)
             scores = judge(item["goal"], context, answer, item["expected"])
             results.append({
                 "id": item["id"],
                 "goal": item["goal"],
                 "should_succeed": item["should_succeed"],
                 "retrieval_hit": retrieval_hit,
+                "context_precision": precision,
                 "retrieved_context": context,
                 "answer": answer,
                 **scores,
             })
 
     # Human-readable table to stdout for a quick glance...
-    # 中文：先打印一张人能一眼看懂的表格……
-    print(f"{'#':<3} {'retr':<5} {'faith':<6} {'relev':<6} {'correct':<8} goal")
+    print(f"{'#':<3} {'retr':<5} {'prec':<6} {'faith':<6} {'relev':<6} {'correct':<8} goal")
     for r in results:
         def fmt(v):
-            return f"{v:.1f}" if isinstance(v, (int, float)) else "  ?  "
+            return f"{v:.2f}" if isinstance(v, (int, float)) else "  ?  "
         print(
             f"{r['id']:<3} {'✅' if r['retrieval_hit'] else '❌':<5} "
+            f"{fmt(r['context_precision']):<6} "
             f"{fmt(r['faithfulness']):<6} {fmt(r['answer_relevance']):<6} {fmt(r['answer_correctness']):<8} "
             f"{r['goal'][:60]}"
         )
 
     # ...and the full detail (including retrieved_context, for debugging why
     # a score came out low) to a gitignored JSON file.
-    # 中文：……再把完整细节（包括 retrieved_context，方便排查为什么某一项
-    # 分低）写进一个 gitignore 掉的 JSON 文件里。
+    
     out_path = "server/eval/last_run.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
