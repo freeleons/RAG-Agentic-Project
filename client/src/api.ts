@@ -10,8 +10,23 @@ import type {
   TicketFilters,
   KnowledgeDocument,
   UserProfile,
-  AgentRun
+  AgentRun,
 } from "./types";
+
+export type {
+  Conversation,
+  ConversationHistory,
+  RunDetail,
+  RunFilters,
+  RunOutcome,
+  RunsPage,
+  RunStats,
+  Ticket,
+  TicketFilters,
+  KnowledgeDocument,
+  UserProfile,
+  AgentRun,
+};
 
 export class ApiError extends Error {
   constructor(
@@ -177,6 +192,18 @@ export async function fetchRunStats(): Promise<any> {
 
 export async function fetchKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
   return apiFetch<KnowledgeDocument[]>("/api/knowledge-base");
+}
+
+export async function fetchKnowledgeDocumentBlob(filename: string): Promise<Blob> {
+  const activeToken = token || localStorage.getItem("apexcare_token");
+  const headers: Record<string, string> = {};
+  if (activeToken) headers["Authorization"] = `Bearer ${activeToken}`;
+  const resp = await fetch(`/api/knowledge-base/file/${encodeURIComponent(filename)}`, { headers });
+  if (!resp.ok) {
+    if (resp.status === 401 && onUnauthorized) onUnauthorized();
+    throw new ApiError(resp.status, `Failed to load document (${resp.status})`);
+  }
+  return await resp.blob();
 }
 
 // Default export api object for legacy/MUI components

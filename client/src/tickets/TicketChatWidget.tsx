@@ -194,7 +194,7 @@ export default function TicketChatWidget({
 
       // Trigger ticket refresh in parent UI if ticket tools ran
       if (
-        outcome.trace.some((s) =>
+        outcome.trace.some((s: any) =>
           ["create_ticket", "update_ticket", "delete_ticket"].includes(s.tool_name || "")
         ) &&
         onTicketUpdated
@@ -235,7 +235,7 @@ export default function TicketChatWidget({
       }
       if (onRefreshConversations) onRefreshConversations();
       if (
-        outcome.trace.some((s) =>
+        outcome.trace.some((s: any) =>
           ["create_ticket", "update_ticket", "delete_ticket"].includes(s.tool_name || "")
         ) &&
         onTicketUpdated

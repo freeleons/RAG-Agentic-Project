@@ -14,7 +14,7 @@
       "Glob(**)",
       "Bash(uv:*)",
       "Bash(pytest:*)",
-      "Bash(python:* -c *)"
+      "Bash(python:*)"
     ]
   },
   "defaultMode": "plan"

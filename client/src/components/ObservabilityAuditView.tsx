@@ -161,7 +161,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
               </h3>
 
               <div className="space-y-2 pt-1">
-                {Object.entries(stats?.tool_usage || { search_knowledge: 12, create_draft: 5, escalate: 1 }).map(
+                {Object.entries(stats?.tool_usage || { search_knowledge: 12, escalate: 1 }).map(
                   ([tool, count]: [string, any], idx) => (
                     <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-xs">
                       <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">🛠️ {tool}</span>
