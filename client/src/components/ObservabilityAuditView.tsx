@@ -260,7 +260,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                       <div key={idx} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 font-mono text-xs shadow-xs">
                         <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
                           <span className="font-bold text-blue-700 dark:text-blue-400">
-                            Seq #{step.seq} — {step.kind === "llm_call" ? "🤖 LLM Reasoning Call" : "🛠️ Tool Execution"}
+                            Seq #{step.seq} — {step.kind === "llm_call" ? "🤖 LLM Reasoning Call" : step.tool_name === "search_knowledge" ? "🔍 Retrieval" : "🛠️ Tool Execution"}
                           </span>
                           <span className="text-slate-500 dark:text-slate-400 font-bold">{step.latency_ms}ms</span>
                         </div>
