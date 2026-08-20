@@ -36,9 +36,6 @@ data/
 *.gguf
 *.bin
 
-# --- Eval harness output (regenerated each run) ---
-server/eval/last_run.json
-
 # --- Editors / OS ---
 .vscode/
 .idea/

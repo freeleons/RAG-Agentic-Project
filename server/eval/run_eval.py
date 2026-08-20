@@ -212,8 +212,9 @@ def main():
         )
 
     # ...and the full detail (including retrieved_context, for debugging why
-    # a score came out low) to a gitignored JSON file.
-    
+    # a score came out low) to a JSON file, committed so run history is
+    # visible in the repo instead of only existing on whoever's machine ran it.
+
     out_path = "server/eval/last_run.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)

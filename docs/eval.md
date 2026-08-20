@@ -46,7 +46,7 @@ For each task record: **success / partial / fail**, the **number of steps** take
 python -m server.eval.run_eval
 ```
 
-Results print as a table and get written to `server/eval/last_run.json` (gitignored — regenerate, don't commit). The golden set lives in `server/eval/golden_set.py`, mirrored by hand from the table above — keep the two in sync when you add a task.
+Results print as a table and get written to `server/eval/last_run.json` — committed, so run history is visible in the repo (re-run and commit the updated file after prompt/tool/model changes). The golden set lives in `server/eval/golden_set.py`, mirrored by hand from the table above — keep the two in sync when you add a task.
 
 ## Run log
 
