@@ -2,9 +2,9 @@
 run_eval.py can iterate over it. Keep this in sync with the table there by
 hand — it's small enough that duplicating it isn't worth a markdown parser.
 
-中文：黄金任务集，从 docs/eval.md 那张表手动搬过来的结构化数据，方便
-run_eval.py 遍历。跟那张表保持同步靠手动维护——就 9 条，量太小，不值得
-为它专门写个 markdown 解析器。
+ids 1-9 are eval.md's "Our task set" (Guardian sales office / regulator
+contacts). ids 10-18 are eval.md's "Task set 2" (COBRA continuation &
+special Medicare rule), same source document, different section.
 """
 
 GOLDEN_SET = [
@@ -64,6 +64,77 @@ GOLDEN_SET = [
         "id": 9,
         "goal": "Call the Bureau of Insurance for me and file the complaint",
         "expected": "Decline — no phone/email-send tool; agent should give the number, not act",
+        "should_succeed": False,
+    },
+    {
+        "id": 10,
+        "goal": "Under the special Medicare rule, how long can a dependent's continuation period last?",
+        "expected": (
+            "The longer of: (a) 18 months (29 months if disability extension) from "
+            "termination/reduction of work hours; or (b) 36 months from the date of "
+            "the employee's earlier Medicare entitlement"
+        ),
+        "should_succeed": True,
+    },
+    {
+        "id": 11,
+        "goal": "When does the special Medicare rule not apply?",
+        "expected": "When Medicare entitlement occurs more than 18 months before termination of employment or reduction of work hours",
+        "should_succeed": True,
+    },
+    {
+        "id": 12,
+        "goal": "What events must a qualified continuee notify the employer about in writing?",
+        "expected": (
+            "(a) legal divorce/separation; (b) loss of dependent eligibility of an insured "
+            "dependent child; (c) a second qualifying event after already on 18- or "
+            "29-month continuation; (d) SSA disability determination during the first "
+            "60 days of 18-month continuation; (e) SSA determination that the person is "
+            "no longer disabled"
+        ),
+        "should_succeed": True,
+    },
+    {
+        "id": 13,
+        "goal": "How long does a qualified continuee have to give notice of a qualifying event?",
+        "expected": "60 days",
+        "should_succeed": True,
+    },
+    {
+        "id": 14,
+        "goal": "The 60-day notice deadline for a qualifying event starts from the latest of which dates?",
+        "expected": (
+            "(a) the date the qualifying event occurs; (b) the date the qualified "
+            "continuee loses (or would lose) coverage; (c) the date the qualified "
+            "continuee is informed of the notice responsibility and procedures"
+        ),
+        "should_succeed": True,
+    },
+    {
+        "id": 15,
+        "goal": "How long does a qualified continuee have to give notice of a disability determination?",
+        "expected": (
+            "60 days from the latest of: SSA determination date; qualifying event date; "
+            "loss-of-coverage date; or date informed of notice procedures"
+        ),
+        "should_succeed": True,
+    },
+    {
+        "id": 16,
+        "goal": "What is the extra deadline for disability notice beyond the 60-day rule?",
+        "expected": "It must be given before the end of the first 18 months of continuation coverage",
+        "should_succeed": True,
+    },
+    {
+        "id": 17,
+        "goal": "Am I still eligible for COBRA continuation under the special Medicare rule?",
+        "expected": "Decline — needs the person's employment/Medicare dates; not answerable from the booklet alone",
+        "should_succeed": False,
+    },
+    {
+        "id": 18,
+        "goal": "Submit the written notice to my employer for me",
+        "expected": "Decline — no submit/notify tool; agent should explain requirements only",
         "should_succeed": False,
     },
 ]

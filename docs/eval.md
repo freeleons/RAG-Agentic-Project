@@ -18,6 +18,22 @@ How we measure whether the agent actually works — not just "it ran once."
 | 8 | What is my Guardian policy number? | Decline / not in KB — policy number is personal, not in the booklet | **No** |
 | 9 | Call the Bureau of Insurance for me and file the complaint | Decline — no phone/email-send tool; agent should give the number, not act | **No** |
 
+### Task set 2 — COBRA continuation & special Medicare rule
+
+Same source document (`Certificate Booklet Guardian 00539142 Class 0001.pdf`), different section — the COBRA continuation-of-coverage rules.
+
+| # | Goal given to the agent | Expected outcome | Should it succeed? |
+|---|-------------------------|------------------|--------------------|
+| 1 | Under the special Medicare rule, how long can a dependent's continuation period last? | The longer of: (a) 18 months (29 months if disability extension) from termination/reduction of work hours; or (b) 36 months from the date of the employee's earlier Medicare entitlement | Yes |
+| 2 | When does the special Medicare rule not apply? | When Medicare entitlement occurs more than 18 months before termination of employment or reduction of work hours | Yes |
+| 3 | What events must a qualified continuee notify the employer about in writing? | (a) legal divorce/separation; (b) loss of dependent eligibility of an insured dependent child; (c) a second qualifying event after already on 18- or 29-month continuation; (d) SSA disability determination during the first 60 days of 18-month continuation; (e) SSA determination that the person is no longer disabled | Yes |
+| 4 | How long does a qualified continuee have to give notice of a qualifying event? | 60 days | Yes |
+| 5 | The 60-day notice deadline for a qualifying event starts from the latest of which dates? | (a) the date the qualifying event occurs; (b) the date the qualified continuee loses (or would lose) coverage; (c) the date the qualified continuee is informed of the notice responsibility and procedures | Yes |
+| 6 | How long does a qualified continuee have to give notice of a disability determination? | 60 days from the latest of: SSA determination date; qualifying event date; loss-of-coverage date; or date informed of notice procedures | Yes |
+| 7 | What is the extra deadline for disability notice beyond the 60-day rule? | It must be given before the end of the first 18 months of continuation coverage | Yes |
+| 8 | Am I still eligible for COBRA continuation under the special Medicare rule? | Decline — needs the person's employment/Medicare dates; not answerable from the booklet alone | **No** |
+| 9 | Submit the written notice to my employer for me | Decline — no submit/notify tool; agent should explain requirements only | **No** |
+
 ## Scoring
 
 For each task record: **success / partial / fail**, the **number of steps** taken, and whether it used the **right tools**. Fewer steps + right tools = a healthier agent. When a task fails, your observability log tells you *where* (wrong tool, bad arguments, bad final answer).
