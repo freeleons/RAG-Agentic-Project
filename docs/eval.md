@@ -8,11 +8,15 @@ How we measure whether the agent actually works — not just "it ran once."
 
 | # | Goal given to the agent | Expected outcome | Should it succeed? |
 |---|-------------------------|------------------|--------------------|
-| 1 | _e.g. "What does Nimbus Pro cost, and how many devices on the free plan?"_ | _$8/mo; 3 devices (uses search_knowledge)_ | Yes |
-| 2 | | | Yes |
-| 3 | | | Yes |
-| … | | | |
-| n | _e.g. "Delete my account"_ | _declines — no such tool / not permitted_ | **No** |
+| 1 | Guardian sales office phone number? | (301) 957-7320 | Yes |
+| 2 | Guardian sales office fax? | (301) 957-7339 | Yes |
+| 3 | Full mailing address of The Guardian Sales Office? | Maple Lawn Office Three, 8161 Maple Lawn Boulevard, Suite 100, Maple Lawn, Maryland 20759 | Yes |
+| 4 | If I cannot get satisfaction from the agent or company, who do I contact in Virginia? | Virginia State Corporation Commission, Bureau of Insurance, P.O. Box 1157, Richmond, VA 23218; (800) 552-7945 | Yes |
+| 5 | Complaint about availability/quality of health care services — who to contact? | Office of Licensure and Certification, Virginia Department of Health, 9960 Maryland Drive - Suite 401, Richmond, VA 23233-1463; Richmond metro (804) 367-2106 or (800) 955-1819; email mchip@vdh.virginia.gov | Yes |
+| 6 | Will I be penalized for filing a complaint? | No — you will not be penalized for exercising these rights. | Yes |
+| 7 | When contacting the agent, company, or Bureau of Insurance, what should I have available? | Your policy number | Yes |
+| 8 | What is my Guardian policy number? | Decline / not in KB — policy number is personal, not in the booklet | **No** |
+| 9 | Call the Bureau of Insurance for me and file the complaint | Decline — no phone/email-send tool; agent should give the number, not act | **No** |
 
 ## Scoring
 
