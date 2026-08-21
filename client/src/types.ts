@@ -58,21 +58,7 @@ export interface TraceStep {
   result: Record<string, unknown> | null;
   latency_ms: number | null;
   llm_messages?: unknown[] | null;
-}
-
-export interface RunStep {
-  seq: number;
-  kind: "llm_call" | "tool_call";
-  id?: string | number;
-  created_at?: string;
-  tool_name?: string;
-  arguments?: Record<string, any>;
-  result?: any;
-  latency_ms?: number;
-  llm_messages?: any[];
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  error_type?: string | null;
+  span_id?: string | null;
 }
 
 export interface PendingAction {
@@ -96,6 +82,7 @@ export interface RunDetail {
   model: string | null;
   provider?: string | null;
   total_latency_ms: number | null;
+  trace_id?: string | null;
   created_at: string;
   steps: TraceStep[];
   pending_action?: PendingAction;
@@ -129,6 +116,7 @@ export interface PanelState {
   steps: TraceStep[];
   pendingAction?: PendingAction;
   totalLatencyMs?: number | null;
+  traceId?: string | null;
 }
 
 export interface RunFilters {
@@ -194,7 +182,7 @@ export interface AgentRun {
   status: "running" | "completed" | "needs_confirmation" | "failed" | "declined";
   answer?: string;
   pending_action?: PendingAction;
-  steps?: RunStep[];
+  steps?: TraceStep[];
   total_latency_ms?: number;
 }
 

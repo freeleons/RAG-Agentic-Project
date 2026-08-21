@@ -99,7 +99,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-1">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">Success Rate</span>
               <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                {stats?.success_rate ? `${Math.round(stats.success_rate * 100)}%` : "100%"}
+                {stats?.success_rate != null ? `${Math.round(stats.success_rate * 100)}%` : "—"}
               </div>
               <span className="text-[10px] text-slate-500 font-semibold">Terminal runs completed</span>
             </div>
@@ -107,7 +107,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-1">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">Average Latency</span>
               <div className="text-2xl font-black text-blue-600 dark:text-blue-400">
-                {stats?.avg_latency_ms ? `${Math.round(stats.avg_latency_ms)}ms` : "620ms"}
+                {stats?.avg_latency_ms != null ? `${Math.round(stats.avg_latency_ms)}ms` : "—"}
               </div>
               <span className="text-[10px] text-slate-500 font-semibold">Per execution run</span>
             </div>
@@ -115,7 +115,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-1">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Token Consumption</span>
               <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
-                {stats?.total_prompt_tokens ? (stats.total_prompt_tokens + stats.total_completion_tokens).toLocaleString() : "4,280"}
+                {stats ? (stats.total_prompt_tokens + stats.total_completion_tokens).toLocaleString() : "—"}
               </div>
               <span className="text-[10px] text-slate-500 font-semibold">Prompt & completion tokens</span>
             </div>
@@ -130,12 +130,7 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
               </h3>
 
               <div className="space-y-2 pt-1">
-                {(stats?.latency_buckets || [
-                  { label: "<2s", count: runs.length },
-                  { label: "2–5s", count: 0 },
-                  { label: "5–15s", count: 0 },
-                  { label: "15s+", count: 0 },
-                ]).map((b: any, idx: number) => {
+                {(stats?.latency_buckets || []).map((b: any, idx: number) => {
                   const maxCount = Math.max(...(stats?.latency_buckets?.map((x: any) => x.count) || [1]), 1);
                   const pct = Math.round((b.count / maxCount) * 100);
 
@@ -161,15 +156,17 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
               </h3>
 
               <div className="space-y-2 pt-1">
-                {Object.entries(stats?.tool_usage || { search_knowledge: 12, escalate: 1 }).map(
-                  ([tool, count]: [string, any], idx) => (
+                {Object.keys(stats?.tool_usage || {}).length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">No tool calls recorded yet.</p>
+                ) : (
+                  Object.entries(stats.tool_usage).map(([tool, count]: [string, any], idx) => (
                     <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-xs">
                       <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">🛠️ {tool}</span>
                       <span className="font-mono text-slate-700 dark:text-slate-300 font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800">
                         {count} calls
                       </span>
                     </div>
-                  )
+                  ))
                 )}
               </div>
             </div>
@@ -243,15 +240,28 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                   <div className="pb-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                     <div>
                       <h3 className="font-bold text-base text-slate-900 dark:text-white">
-                        Agent Run #{selectedRunDetails.run?.id} Trace Breakdown
+                        Agent Run #{selectedRunDetails.id} Trace Breakdown
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-400 font-mono font-medium flex items-center gap-2 mt-1">
                         <span>Status:</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedRunDetails.run?.status)}`}>
-                          {selectedRunDetails.run?.status}
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedRunDetails.status)}`}>
+                          {selectedRunDetails.status}
                         </span>
-                        <span>• Latency: {selectedRunDetails.run?.total_latency_ms || 0}ms</span>
+                        <span>• Latency: {selectedRunDetails.total_latency_ms || 0}ms</span>
                       </p>
+                      {selectedRunDetails.trace_id && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1.5 mt-1">
+                          <span>trace_id: {selectedRunDetails.trace_id}</span>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(selectedRunDetails.trace_id)}
+                            aria-label="copy trace id"
+                            title="Copy trace_id"
+                            className="text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                          >
+                            📋
+                          </button>
+                        </p>
+                      )}
                     </div>
                   </div>
 

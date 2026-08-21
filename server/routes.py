@@ -7,6 +7,7 @@ Roadmap of this file:
     GET  /runs                  paginated run list (admins see all users)
     GET  /runs/<id>             one run with its full step trace
     POST /runs/<id>/stop        cancel a run mid-flight
+    GET  /guardrail-events      paginated guardrail-rejection log (admins see all users)
 
   Tickets (the demo HR helpdesk domain)
     GET   /tickets              list the user's tickets
@@ -25,6 +26,7 @@ Every endpoint is wrapped in @require_auth, which provides g.user/g.is_admin.
 import json
 import os
 import re
+import time
 from datetime import date
 from flask import Blueprint, current_app, g, jsonify, request, send_from_directory
 from sqlalchemy import func
@@ -33,14 +35,14 @@ from server.agent import resume_run, run_agent
 from server.auth import require_auth
 from server.hitl import execute_tool_with_hitl
 from server.llm import generate, llm_provider, stamp_run_llm_identity
-from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
+from server.models import Conversation, GuardrailEvent, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
 from server.tools import openai_tool_defs, validate_arguments
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.sanitization import reject_if_injection
-from server.utils import clean_draft_text, format_knowledge_answer, is_client_disconnected
+from server.utils import clean_draft_text, content_hash, format_knowledge_answer, is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
     PIP_CLASSIFICATION_PROMPT,
@@ -73,6 +75,7 @@ def _serialize_steps(run, include_messages=False):
             "result": s.result,
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
+            "span_id": s.span_id,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -87,6 +90,7 @@ def _serialize_run(run):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
+        "trace_id": run.trace_id,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -299,6 +303,43 @@ def list_runs():
     return jsonify({"runs": runs, "total": total, "page": page, "per_page": per_page})
 
 
+@api_bp.get("/guardrail-events")
+@require_auth
+def list_guardrail_events():
+    """Paginated guardrail-rejection log (newest first) — the read side of
+    GuardrailEvent. Non-admins see only their own rejections; admins see
+    everyone's, same role split as list_runs/_filtered_runs_query.
+   
+    """
+    q = db.session.query(GuardrailEvent, User).join(User, GuardrailEvent.user_id == User.id)
+    if not g.is_admin:
+        q = q.filter(GuardrailEvent.user_id == g.user.id)
+    page = max(request.args.get("page", 1, type=int), 1)
+    per_page = min(max(request.args.get("per_page", 20, type=int), 1), 100)
+    total = q.count()
+    rows = (
+        q.order_by(GuardrailEvent.created_at.desc(), GuardrailEvent.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+    events = []
+    for event, user in rows:
+        item = {
+            "id": event.id,
+            "source": event.source,
+            "filter": event.filter_name,
+            "score": event.score,
+            "action": event.action,
+            "input_hash": event.input_hash,
+            "created_at": event.created_at.isoformat(),
+        }
+        if g.is_admin:
+            item["user_email"] = user.email
+        events.append(item)
+    return jsonify({"events": events, "total": total, "page": page, "per_page": per_page})
+
+
 @api_bp.get("/runs/<int:run_id>")
 @require_auth
 def get_run(run_id):
@@ -314,6 +355,7 @@ def get_run(run_id):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
+        "trace_id": run.trace_id,
         "created_at": run.created_at.isoformat(),
         "steps": _serialize_steps(run, include_messages=True),
     }
@@ -656,6 +698,18 @@ def _next_run_seq(run_id):
     """Same as agent._next_seq but keyed by id — next free step number."""
     count = db.session.query(func.count(RunStep.id)).filter_by(run_id=run_id).scalar()
     return count + 1
+
+
+def _stamp_total_latency(run):
+    """Same aggregation as agent._finish — sum this run's step latencies onto
+    Run.total_latency_ms. pip_chat() times its own steps by hand (see the
+    RunStep(...) writes below) instead of going through observability.
+    record_step(), so nothing sets this column for it otherwise."""
+    run.total_latency_ms = (
+        db.session.query(func.coalesce(func.sum(RunStep.latency_ms), 0))
+        .filter_by(run_id=run.id)
+        .scalar()
+    )
 
 
 @api_bp.post("/tickets/<int:ticket_id>/triage")
@@ -1021,7 +1075,12 @@ def pip_chat():
         if not has_knowledge_intent:
             try:
                 classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
+                classify_start = time.perf_counter()
                 class_res = generate([{"role": "user", "content": classification_prompt}], tools=[])
+                step1.latency_ms = int((time.perf_counter() - classify_start) * 1000)
+                usage = class_res.get("usage") or {}
+                step1.prompt_tokens = usage.get("prompt_tokens")
+                step1.completion_tokens = usage.get("completion_tokens")
                 class_content = (class_res.get("content") or "").strip().upper()
 
                 if "CHITCHAT" in class_content or "GENERAL" in class_content or ("NO" in class_content and "YES" not in class_content):
@@ -1051,6 +1110,7 @@ def pip_chat():
         )
         db.session.add(step2)
         db.session.commit()
+        search_start = time.perf_counter()
         try:
             kb_result = search_knowledge(message_text)
             if kb_result and "error" not in str(kb_result):
@@ -1058,9 +1118,11 @@ def pip_chat():
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
+            step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
         except Exception as e:
             step2.result = {"error": str(e)}
+            step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
 
     # Step 2: Select the dedicated system prompt based on route_flag
@@ -1087,10 +1149,20 @@ def pip_chat():
             {"role": "user", "content": message_text}
         ]
 
+    # Fingerprint the static template (not the per-request tickets_context/
+    # kb_context, which vary by design every call) so drift in the wording we
+    # actually wrote is detectable independent of the dynamic content around it.
+    # 中文：只对静态模板部分打指纹（不包括 tickets_context/kb_context——这两个
+    # 本来每次请求就该不一样），这样我们自己写的措辞有没有被改动，能独立于
+    # 周围动态内容被检测出来。
+    run.system_prompt_hash = content_hash(system_prompt)
+    db.session.commit()
+
     # Cancellation checks before final generation
     if is_client_disconnected():
         current_app.logger.info("Chat generation aborted: client disconnected.")
         run.status = "stopped"
+        _stamp_total_latency(run)
         db.session.commit()
         return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
@@ -1110,12 +1182,18 @@ def pip_chat():
     db.session.add(step3)
     db.session.commit()
 
+    compose_start = time.perf_counter()
     try:
         res = generate(messages, tools=[])
+        step3.latency_ms = int((time.perf_counter() - compose_start) * 1000)
+        usage = res.get("usage") or {}
+        step3.prompt_tokens = usage.get("prompt_tokens")
+        step3.completion_tokens = usage.get("completion_tokens")
 
         if is_client_disconnected():
             current_app.logger.info("Chat generation aborted: client disconnected.")
             run.status = "stopped"
+            _stamp_total_latency(run)
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
@@ -1187,6 +1265,9 @@ def pip_chat():
 
         step3.result = {"content": content}
         run.status = "completed"
+        # Audit fingerprint of what the user was actually shown.
+        run.final_output_hash = content_hash(content)
+        _stamp_total_latency(run)
         db.session.commit()
 
         resp_payload = {
@@ -1200,10 +1281,16 @@ def pip_chat():
             resp_payload["ticket_id"] = target_ticket.id
         return jsonify(resp_payload)
     except Exception as e:
+        # generate() may have raised before step3.latency_ms was set above, or
+        # something after it did — either way this is the honest elapsed time
+        # for the step that failed.
+        step3.latency_ms = int((time.perf_counter() - compose_start) * 1000)
+
         # The generate() call itself failed. A stop/disconnect racing with the
         # failure still wins and reports "stopped" rather than an error.
         if is_client_disconnected():
             run.status = "stopped"
+            _stamp_total_latency(run)
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
@@ -1217,6 +1304,7 @@ def pip_chat():
 
         step3.result = {"error": str(e)}
         run.status = "failed"
+        _stamp_total_latency(run)
         db.session.commit()
 
         # Provide a graceful, honest failure message to the user

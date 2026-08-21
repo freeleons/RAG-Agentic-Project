@@ -6,13 +6,16 @@ How the tables relate (one line per arrow = one foreign key):
           │        │
           │        └─< Run ─┬─< RunStep        (the visible agent trace)
           │                 └─< PendingAction  (tool call awaiting user OK)
+          ├─< GuardrailEvent (pre-run rejections — no Run exists yet)
           └─< Ticket
 
 A "Run" is one execution of the agent loop for one user goal. Every LLM call
 and tool call inside it is persisted as a RunStep — that's the observability
 requirement: the whole trace can be replayed from the DB.
+
 """
 
+import secrets
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
@@ -27,6 +30,14 @@ def utcnow():
     (datetime.utcnow() is naive and deprecated; this is the safe replacement.)
     """
     return datetime.now(timezone.utc)
+
+
+def new_trace_id():
+    """A random 128-bit id, 32 lowercase hex chars — the trace_id half of a
+    W3C traceparent. Minted once per Run so every RunStep's OTel span (see
+    tracing.py) can share it, giving the whole run one real trace_id even
+    though it never leaves this one Flask process."""
+    return secrets.token_hex(16)
 
 
 class User(db.Model):
@@ -88,9 +99,21 @@ class Run(db.Model):
     model = db.Column(db.String(128))          # which LLM served this run
     # feat/obs-provider-error-type: gen_ai.provider.name — "ollama" (default)
     # or "openai_compatible" (hosted).
-    # 中文：对应 OTel gen_ai.provider.name；默认 "ollama"，托管模型为 "openai_compatible"。
     provider = db.Column(db.String(32))
     total_latency_ms = db.Column(db.Integer)   # sum of step latencies, set on finish
+    # SHA-256 of the system prompt template actually used (set once, when the
+    # run starts) — lets an auditor detect prompt drift ("this run's hash
+    # doesn't match last week's") without storing the prompt text a second
+    # time; the full text already lives in the first llm_call RunStep.
+    system_prompt_hash = db.Column(db.String(64))
+    # SHA-256 of the final answer shown to the user, set when the run
+    # terminates — an integrity fingerprint for "what the user actually saw,"
+    # independent of the plaintext Message row.
+    final_output_hash = db.Column(db.String(64))
+    # feat/otel-tracing: W3C trace_id (32 hex chars) shared by every RunStep's
+    # OTel span — see tracing.py. Minted once here so it survives across the
+    # separate HTTP request that resumes a HITL-paused run.
+    trace_id = db.Column(db.String(32), default=new_trace_id)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     # run.steps yields the trace in execution order (seq 1, 2, 3, ...).
     steps = db.relationship("RunStep", backref="run", order_by="RunStep.seq")
@@ -107,9 +130,6 @@ class RunStep(db.Model):
     feat/obs-provider-error-type: maps loosely to an OTel GenAI span
     (duration_ms → latency_ms, error.type → error_type). Token counts stay
     as the provider total (not four layers).
-
-    中文：大致对应 OTel GenAI span（latency_ms、error_type）；token 仅存提供商
-    返回的总量，不做四层拆分。
     """
 
     __tablename__ = "run_steps"
@@ -125,8 +145,17 @@ class RunStep(db.Model):
     prompt_tokens = db.Column(db.Integer)            # token usage reported by the model
     completion_tokens = db.Column(db.Integer)
     # feat/obs-provider-error-type: error.type (OTel) — Timeout | ConnectionError | …
-    # 中文：对应 OTel error.type，如 Timeout、ConnectionError 等。
     error_type = db.Column(db.String(64))
+    # SHA-256 fingerprints of `arguments`/`result`, computed alongside them in
+    # observability.record_step() — the hash gives every step an integrity
+    # fingerprint that can be verified, shipped to an external log store, or
+    # compared across runs without re-reading (or re-exposing) the plaintext.
+    arguments_hash = db.Column(db.String(64))
+    result_hash = db.Column(db.String(64))
+    # feat/otel-tracing: this step's own OTel span id (16 hex chars), a child
+    # of its Run's trace_id — the pair (Run.trace_id, span_id) is this step's
+    # W3C-shaped coordinate, pasteable into any OTel-speaking backend.
+    span_id = db.Column(db.String(16))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 
@@ -146,6 +175,41 @@ class PendingAction(db.Model):
     arguments = db.Column(db.JSON)
     status = db.Column(db.String(16), nullable=False, default="pending")  # pending | approved | rejected
     resolved_at = db.Column(db.DateTime(timezone=True))
+
+
+class GuardrailEvent(db.Model):
+    """A guardrail firing — currently just sanitization.reject_if_injection's
+    regex blocklist, but the table shape doesn't assume that's the only one.
+
+    Deliberately NOT tied to a Run: prompt-injection rejection happens at the
+    HTTP entry point BEFORE a Conversation/Message/Run exists (the request is
+    rejected outright), so there is no run_id to attach this to yet. Scoped
+    to user_id instead, which @require_auth guarantees is always available.
+
+
+    """
+
+    __tablename__ = "guardrail_events"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # Which call site fired this ("chat" | "triage") — mirrors the `source`
+    # kwarg already passed to reject_if_injection.
+    source = db.Column(db.String(32), nullable=False)
+    # The regex pattern that matched — the "filter" in the audit schema sense
+    # (which rule fired), not the user's raw text.
+    filter_name = db.Column(db.Text, nullable=False)
+    # Deterministic regex match, not a scored classifier, so this is always
+    # 1.0 today — the column exists so a future probabilistic filter (see
+    # sanitization.py's own docstring: "a classifier can be added later")
+    # doesn't need a schema change to report a real confidence score.
+    score = db.Column(db.Float, nullable=False, default=1.0)
+    # Always "blocked" today (the only action reject_if_injection takes);
+    # kept as a field, not a hardcoded assumption, for the same reason.
+    action = db.Column(db.String(16), nullable=False, default="blocked")
+    # Hash, not the offending text itself — an injection probe is exactly the
+    # kind of content an audit log shouldn't store verbatim.
+    input_hash = db.Column(db.String(64))
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 
 class Ticket(db.Model):

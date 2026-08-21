@@ -177,8 +177,8 @@ export async function rejectPendingAction(runId: number): Promise<AgentRun> {
   });
 }
 
-export async function fetchRunDetails(runId: number): Promise<{ run: any; steps: any[] }> {
-  return apiFetch<{ run: any; steps: any[] }>(`/api/runs/${runId}`);
+export async function fetchRunDetails(runId: number): Promise<RunDetail> {
+  return apiFetch<RunDetail>(`/api/runs/${runId}`);
 }
 
 export async function fetchAllRunAudits(): Promise<any[]> {

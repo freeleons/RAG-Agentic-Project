@@ -52,7 +52,11 @@ export function renderAudit(extraRoutes: Parameters<typeof stubFetch>[0] = {}) {
     "GET /api/tickets": () => jsonResponse([]),
     "GET /api/runs": () => jsonResponse(RUNS_LIST),
     "GET /api/runs/stats": () => jsonResponse(STATS),
-    "GET /api/runs/17": () => jsonResponse({ run: RUNS_LIST.runs[0], steps: [] }),
+    // The real /api/runs/<id> response is flat (id, status, total_latency_ms,
+    // trace_id, steps, ...) — no `run` wrapper. Mirroring that shape here is
+    // what catches ObservabilityAuditView reading a nonexistent `.run` field.
+    "GET /api/runs/17": () =>
+      jsonResponse({ ...RUNS_LIST.runs[0], trace_id: "eaa5ded750e3b61bd1f3b1205469f768", steps: [] }),
     ...extraRoutes,
   });
   return render(<App />);
@@ -92,9 +96,38 @@ test("audit tab shows empty state with no runs", async () => {
   expect(await screen.findByText("Audit Log Runs (0)")).toBeInTheDocument();
 });
 
+test("stat cards show real zero/em-dash instead of fabricated placeholder numbers when data is empty", async () => {
+  // These cards used to fall back to hardcoded demo values ("100%", "620ms",
+  // "4,280", a fake tool_usage entry) whenever the real stat was falsy —
+  // including a genuine 0, which is indistinguishable from "no data" in JS.
+  // With zero real runs, every one of those fallbacks would have fired.
+  renderAudit({
+    "GET /api/runs": () => jsonResponse({ runs: [] }),
+    "GET /api/runs/stats": () => jsonResponse(EMPTY_STATS),
+  });
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  await screen.findByText("Audit Log Runs (0)");
+  expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2); // success rate, avg latency: null, not 0
+  expect(screen.queryByText("100%")).not.toBeInTheDocument();
+  expect(screen.queryByText("620ms")).not.toBeInTheDocument();
+  expect(screen.queryByText("4,280")).not.toBeInTheDocument();
+  expect(screen.getAllByText("0").length).toBeGreaterThan(0); // total runs + token consumption, both genuine 0s
+  expect(screen.getByText("No tool calls recorded yet.")).toBeInTheDocument();
+  expect(screen.queryByText(/escalate/i)).not.toBeInTheDocument();
+});
+
 test("runs table renders rows", async () => {
   renderAudit();
   await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
   expect(await screen.findByText("Audit Log Runs (1)")).toBeInTheDocument();
   expect(screen.getByText(/Escalate ticket/i)).toBeInTheDocument();
+});
+
+test("trace breakdown header reads id/status/latency/trace_id off the flat run-detail response", async () => {
+  renderAudit();
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  expect(await screen.findByText("Agent Run #17 Trace Breakdown")).toBeInTheDocument();
+  expect(screen.getAllByText("completed").length).toBeGreaterThan(0); // run card + trace header both show it
+  expect(screen.getByText(/Latency: 5210ms/i)).toBeInTheDocument();
+  expect(screen.getByText(/trace_id: eaa5ded750e3b61bd1f3b1205469f768/i)).toBeInTheDocument();
 });

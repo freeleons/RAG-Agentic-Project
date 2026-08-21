@@ -59,6 +59,28 @@ def test_record_step_classifies_timeout_and_connection_error(app, run):
     assert steps[1].error_type == "ConnectionError"
 
 
+def test_record_step_stores_audit_hashes(app, run):
+    """feat/audit-log-hardening: arguments/result get an integrity hash
+    alongside the plaintext columns.
+    """
+    from server.models import RunStep
+    from server.observability import record_step
+    from server.utils import content_hash
+
+    args = {"query": "vpn"}
+    record_step(
+        run.id,
+        1,
+        "tool_call",
+        lambda: {"answer": "kb says reset"},
+        tool_name="search_knowledge",
+        arguments=args,
+    )
+    step = RunStep.query.filter_by(run_id=run.id).one()
+    assert step.arguments_hash == content_hash(args)
+    assert step.result_hash == content_hash({"answer": "kb says reset"})
+
+
 def test_record_step_stores_tokens_and_strips_usage(app, run):
     from server.models import RunStep
     from server.observability import record_step
