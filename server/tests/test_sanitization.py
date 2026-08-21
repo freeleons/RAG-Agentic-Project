@@ -57,8 +57,6 @@ def test_chat_endpoint_rejection_persists_guardrail_event(app, client, auth_head
     """feat/audit-log-hardening: a rejection is durable audit data, not just
     an app-log line -- and the offending text is hashed, never stored raw.
 
-    中文：拦截记录要落库，不能只写一行 app log——而且原始文本只存哈希，
-    绝不明文保留。
     """
     from server.models import GuardrailEvent, User
     from server.utils import content_hash
