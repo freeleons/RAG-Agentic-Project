@@ -58,6 +58,24 @@ test("needs_confirmation shows the pending action and fires onConfirm", async ()
   expect(onConfirm).toHaveBeenCalledWith(false);
 });
 
+test("renders a copyable trace_id when present", () => {
+  const panel: PanelState = {
+    runId: 19,
+    status: "completed",
+    steps: STEPS,
+    traceId: "eaa5ded750e3b61bd1f3b1205469f768",
+  };
+  render(<TracePanel panel={panel} busy={false} onConfirm={() => {}} />);
+  expect(screen.getByText(/trace_id: eaa5ded750e3b61bd1f3b1205469f768/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /copy trace id/i })).toBeInTheDocument();
+});
+
+test("omits the trace_id row when absent", () => {
+  const panel: PanelState = { runId: 20, status: "completed", steps: STEPS };
+  render(<TracePanel panel={panel} busy={false} onConfirm={() => {}} />);
+  expect(screen.queryByText(/trace_id:/i)).not.toBeInTheDocument();
+});
+
 test("buttons are disabled while busy", () => {
   const panel: PanelState = {
     runId: 18,

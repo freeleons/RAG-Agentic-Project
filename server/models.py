@@ -15,6 +15,7 @@ requirement: the whole trace can be replayed from the DB.
 
 """
 
+import secrets
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
@@ -29,6 +30,14 @@ def utcnow():
     (datetime.utcnow() is naive and deprecated; this is the safe replacement.)
     """
     return datetime.now(timezone.utc)
+
+
+def new_trace_id():
+    """A random 128-bit id, 32 lowercase hex chars — the trace_id half of a
+    W3C traceparent. Minted once per Run so every RunStep's OTel span (see
+    tracing.py) can share it, giving the whole run one real trace_id even
+    though it never leaves this one Flask process."""
+    return secrets.token_hex(16)
 
 
 class User(db.Model):
@@ -101,6 +110,10 @@ class Run(db.Model):
     # terminates — an integrity fingerprint for "what the user actually saw,"
     # independent of the plaintext Message row.
     final_output_hash = db.Column(db.String(64))
+    # feat/otel-tracing: W3C trace_id (32 hex chars) shared by every RunStep's
+    # OTel span — see tracing.py. Minted once here so it survives across the
+    # separate HTTP request that resumes a HITL-paused run.
+    trace_id = db.Column(db.String(32), default=new_trace_id)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     # run.steps yields the trace in execution order (seq 1, 2, 3, ...).
     steps = db.relationship("RunStep", backref="run", order_by="RunStep.seq")
@@ -132,7 +145,6 @@ class RunStep(db.Model):
     prompt_tokens = db.Column(db.Integer)            # token usage reported by the model
     completion_tokens = db.Column(db.Integer)
     # feat/obs-provider-error-type: error.type (OTel) — Timeout | ConnectionError | …
-    # 中文：对应 OTel error.type，如 Timeout、ConnectionError 等。
     error_type = db.Column(db.String(64))
     # SHA-256 fingerprints of `arguments`/`result`, computed alongside them in
     # observability.record_step() — the hash gives every step an integrity
@@ -140,6 +152,10 @@ class RunStep(db.Model):
     # compared across runs without re-reading (or re-exposing) the plaintext.
     arguments_hash = db.Column(db.String(64))
     result_hash = db.Column(db.String(64))
+    # feat/otel-tracing: this step's own OTel span id (16 hex chars), a child
+    # of its Run's trace_id — the pair (Run.trace_id, span_id) is this step's
+    # W3C-shaped coordinate, pasteable into any OTel-speaking backend.
+    span_id = db.Column(db.String(16))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 

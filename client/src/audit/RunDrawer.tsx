@@ -72,6 +72,7 @@ export default function RunDrawer({ runId, onClose }: Props) {
                     steps: detail.steps,
                     pendingAction: detail.pending_action,
                     totalLatencyMs: detail.total_latency_ms,
+                    traceId: detail.trace_id,
                   }
                 : null
             }

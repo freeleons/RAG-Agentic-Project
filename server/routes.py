@@ -74,6 +74,7 @@ def _serialize_steps(run, include_messages=False):
             "result": s.result,
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
+            "span_id": s.span_id,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -88,6 +89,7 @@ def _serialize_run(run):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
+        "trace_id": run.trace_id,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -352,6 +354,7 @@ def get_run(run_id):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
+        "trace_id": run.trace_id,
         "created_at": run.created_at.isoformat(),
         "steps": _serialize_steps(run, include_messages=True),
     }

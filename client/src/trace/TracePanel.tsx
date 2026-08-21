@@ -1,10 +1,13 @@
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import {
   Alert,
   Box,
   Button,
   Chip,
+  IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import type { PanelState } from "../types";
@@ -51,6 +54,22 @@ export default function TracePanel({ panel, busy, onConfirm }: Props) {
           </Typography>
         )}
       </Stack>
+      {panel.traceId && (
+        <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
+            trace_id: {panel.traceId}
+          </Typography>
+          <Tooltip title="Copy trace_id">
+            <IconButton
+              size="small"
+              onClick={() => navigator.clipboard.writeText(panel.traceId as string)}
+              aria-label="copy trace id"
+            >
+              <ContentCopyIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      )}
       {panel.steps.map((s) => (
         <StepItem key={s.seq} step={s} />
       ))}

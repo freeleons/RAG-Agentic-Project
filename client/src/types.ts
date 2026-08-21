@@ -58,6 +58,7 @@ export interface TraceStep {
   result: Record<string, unknown> | null;
   latency_ms: number | null;
   llm_messages?: unknown[] | null;
+  span_id?: string | null;
 }
 
 export interface RunStep {
@@ -96,6 +97,7 @@ export interface RunDetail {
   model: string | null;
   provider?: string | null;
   total_latency_ms: number | null;
+  trace_id?: string | null;
   created_at: string;
   steps: TraceStep[];
   pending_action?: PendingAction;
@@ -129,6 +131,7 @@ export interface PanelState {
   steps: TraceStep[];
   pendingAction?: PendingAction;
   totalLatencyMs?: number | null;
+  traceId?: string | null;
 }
 
 export interface RunFilters {
