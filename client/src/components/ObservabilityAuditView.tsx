@@ -243,14 +243,14 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                   <div className="pb-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                     <div>
                       <h3 className="font-bold text-base text-slate-900 dark:text-white">
-                        Agent Run #{selectedRunDetails.run?.id} Trace Breakdown
+                        Agent Run #{selectedRunDetails.id} Trace Breakdown
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-400 font-mono font-medium flex items-center gap-2 mt-1">
                         <span>Status:</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedRunDetails.run?.status)}`}>
-                          {selectedRunDetails.run?.status}
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedRunDetails.status)}`}>
+                          {selectedRunDetails.status}
                         </span>
-                        <span>• Latency: {selectedRunDetails.run?.total_latency_ms || 0}ms</span>
+                        <span>• Latency: {selectedRunDetails.total_latency_ms || 0}ms</span>
                       </p>
                       {selectedRunDetails.trace_id && (
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1.5 mt-1">

@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
   Drawer,
   Snackbar,
   Tab,
@@ -14,9 +13,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { useAuth } from "../auth/AuthContext";
-import AuditPage from "../audit/AuditPage";
 import TicketsPage from "../tickets/TicketsPage";
-import TracePanel from "../trace/TracePanel";
 import type { Conversation, PanelState, RunOutcome, UiMessage } from "../types";
 import ChatView from "./ChatView";
 import ConversationList from "./ConversationList";
@@ -24,7 +21,6 @@ import PromptStarters from "./PromptStarters";
 import { pairHistory } from "./history";
 
 const DRAWER_WIDTH = 260;
-const PANEL_WIDTH = 380;
 
 export function errMsg(err: unknown): string {
   return err instanceof ApiError ? err.message : "Network error — is the backend running?";
@@ -39,7 +35,7 @@ export default function AppPage() {
   const [busy, setBusy] = useState(false);
   const [panel, setPanel] = useState<PanelState | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
-  const [view, setView] = useState<"tickets" | "chat" | "audit">("chat");
+  const [view, setView] = useState<"tickets" | "chat">("chat");
   const [searchQuery, setSearchQuery] = useState("");
   const [ticketRefreshVersion, setTicketRefreshVersion] = useState(0);
 
@@ -319,14 +315,13 @@ export default function AppPage() {
 
           <Tabs
             value={view}
-            onChange={(_, v: "tickets" | "chat" | "audit") => setView(v)}
+            onChange={(_, v: "tickets" | "chat") => setView(v)}
             textColor="inherit"
             indicatorColor="secondary"
             sx={{ flexGrow: 1 }}
           >
             <Tab value="tickets" label="Tickets" sx={{ fontWeight: 600 }} />
             <Tab value="chat" label="Chat" sx={{ fontWeight: 600 }} />
-            <Tab value="audit" label="Audit" sx={{ fontWeight: 600 }} />
           </Tabs>
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <Typography variant="body2" sx={{ color: "#E2E8F0", fontWeight: 500 }}>
@@ -346,12 +341,7 @@ export default function AppPage() {
         </Toolbar>
       </AppBar>
 
-      {view === "audit" ? (
-        <Box component="main" sx={{ flexGrow: 1, overflowY: "auto" }}>
-          <Toolbar />
-          <AuditPage />
-        </Box>
-      ) : view === "tickets" ? (
+      {view === "tickets" ? (
         <Box component="main" sx={{ flexGrow: 1, overflowY: "auto" }}>
           <Toolbar />
           <TicketsPage
@@ -425,11 +415,6 @@ export default function AppPage() {
                 onStop={handleStop}
               />
             )}
-          </Box>
-          <Divider orientation="vertical" flexItem />
-          <Box sx={{ width: PANEL_WIDTH, flexShrink: 0, display: "flex", flexDirection: "column" }}>
-            <Toolbar />
-            <TracePanel panel={panel} busy={busy} onConfirm={confirm} />
           </Box>
         </>
       )}

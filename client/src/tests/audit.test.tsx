@@ -52,7 +52,11 @@ export function renderAudit(extraRoutes: Parameters<typeof stubFetch>[0] = {}) {
     "GET /api/tickets": () => jsonResponse([]),
     "GET /api/runs": () => jsonResponse(RUNS_LIST),
     "GET /api/runs/stats": () => jsonResponse(STATS),
-    "GET /api/runs/17": () => jsonResponse({ run: RUNS_LIST.runs[0], steps: [] }),
+    // The real /api/runs/<id> response is flat (id, status, total_latency_ms,
+    // trace_id, steps, ...) — no `run` wrapper. Mirroring that shape here is
+    // what catches ObservabilityAuditView reading a nonexistent `.run` field.
+    "GET /api/runs/17": () =>
+      jsonResponse({ ...RUNS_LIST.runs[0], trace_id: "eaa5ded750e3b61bd1f3b1205469f768", steps: [] }),
     ...extraRoutes,
   });
   return render(<App />);
@@ -99,22 +103,11 @@ test("runs table renders rows", async () => {
   expect(screen.getByText(/Escalate ticket/i)).toBeInTheDocument();
 });
 
-test("trace breakdown shows a copyable trace_id from the flat run-detail response", async () => {
-  // /api/runs/<id> actually returns a flat object (id, status, trace_id, steps,
-  // ...) — no `run` wrapper. Unlike renderAudit()'s default mock (which mirrors
-  // the component's buggy `.run?.field` reads), this one matches the real
-  // backend shape so the trace_id row's `selectedRunDetails.trace_id` read is
-  // exercised against actual production data.
-  renderAudit({
-    "GET /api/runs/17": () =>
-      jsonResponse({
-        id: 17,
-        status: "completed",
-        total_latency_ms: 5210,
-        trace_id: "eaa5ded750e3b61bd1f3b1205469f768",
-        steps: [],
-      }),
-  });
+test("trace breakdown header reads id/status/latency/trace_id off the flat run-detail response", async () => {
+  renderAudit();
   await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
-  expect(await screen.findByText(/trace_id: eaa5ded750e3b61bd1f3b1205469f768/i)).toBeInTheDocument();
+  expect(await screen.findByText("Agent Run #17 Trace Breakdown")).toBeInTheDocument();
+  expect(screen.getAllByText("completed").length).toBeGreaterThan(0); // run card + trace header both show it
+  expect(screen.getByText(/Latency: 5210ms/i)).toBeInTheDocument();
+  expect(screen.getByText(/trace_id: eaa5ded750e3b61bd1f3b1205469f768/i)).toBeInTheDocument();
 });

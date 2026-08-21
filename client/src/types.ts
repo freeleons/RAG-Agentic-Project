@@ -61,21 +61,6 @@ export interface TraceStep {
   span_id?: string | null;
 }
 
-export interface RunStep {
-  seq: number;
-  kind: "llm_call" | "tool_call";
-  id?: string | number;
-  created_at?: string;
-  tool_name?: string;
-  arguments?: Record<string, any>;
-  result?: any;
-  latency_ms?: number;
-  llm_messages?: any[];
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  error_type?: string | null;
-}
-
 export interface PendingAction {
   id: number;
   tool: string;
@@ -197,7 +182,7 @@ export interface AgentRun {
   status: "running" | "completed" | "needs_confirmation" | "failed" | "declined";
   answer?: string;
   pending_action?: PendingAction;
-  steps?: RunStep[];
+  steps?: TraceStep[];
   total_latency_ms?: number;
 }
 
