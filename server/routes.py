@@ -1063,17 +1063,29 @@ def pip_chat():
             step2.result = {"error": str(e)}
             db.session.commit()
 
+    # Prior turns in this conversation, so follow-ups ("and how does it roll
+    # over?") resolve against what was already said instead of starting cold
+    # each request. Capped so the prompt doesn't grow unbounded over a long chat.
+    history_messages = [
+        {"role": m.role, "content": m.content}
+        for m in Message.query.filter(
+            Message.conversation_id == conv.id, Message.id != msg.id
+        ).order_by(Message.id).all()
+    ][-20:]
+
     # Step 2: Select the dedicated system prompt based on route_flag
     if route_flag == "GENERAL":
         system_prompt = PIP_GENERAL_SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system_prompt},
+            *history_messages,
             {"role": "user", "content": message_text}
         ]
     elif route_flag == "DRAFT":
         system_prompt = PIP_DRAFT_SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system_prompt + tickets_context + kb_context},
+            *history_messages,
             {"role": "user", "content": message_text}
         ]
     else:  # SEARCH_KNOWLEDGE
@@ -1084,6 +1096,7 @@ def pip_chat():
         t_ctx = tickets_context if include_tickets else ""
         messages = [
             {"role": "system", "content": system_prompt + t_ctx + kb_context},
+            *history_messages,
             {"role": "user", "content": message_text}
         ]
 
@@ -1187,6 +1200,8 @@ def pip_chat():
 
         step3.result = {"content": content}
         run.status = "completed"
+        # Persist the reply so the next turn's history_messages query picks it up.
+        db.session.add(Message(conversation_id=conv.id, role="assistant", content=content))
         db.session.commit()
 
         resp_payload = {

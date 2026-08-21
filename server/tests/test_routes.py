@@ -136,6 +136,39 @@ def test_pip_chat_routes(client, auth_headers, monkeypatch):
     assert "General Chit-Chat" in system_msg["content"]
 
 
+def test_pip_chat_maintains_conversation_context(client, auth_headers, monkeypatch):
+    """A second /api/chat turn must see the first turn's exchange, so follow-up
+    questions ("what's my name?") resolve against what was already said instead
+    of starting cold each request.
+    """
+    mock_called = []
+
+    def mock_generate(messages, tools):
+        mock_called.append(messages)
+        if len(messages) == 1 and "routing assistant" in messages[0]["content"]:
+            return {"type": "final", "content": "NO"}
+        return {"type": "final", "content": "Got it!"}
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr(
+        "server.routes.search_knowledge",
+        lambda q: {"answer": "NO_POLICY_MATCH", "sources": []},
+    )
+
+    resp1 = client.post("/api/chat", json={"message": "My name is Dave"}, headers=auth_headers)
+    assert resp1.status_code == 200
+
+    resp2 = client.post("/api/chat", json={"message": "What is my name?"}, headers=auth_headers)
+    assert resp2.status_code == 200
+
+    # The final generate() call of turn 2 must carry turn 1's user message and
+    # Pip's own reply to it -- both sides of the exchange, not just the DB record.
+    final_call_messages = mock_called[-1]
+    joined = " ".join(m["content"] for m in final_call_messages)
+    assert "My name is Dave" in joined
+    assert "Got it!" in joined
+
+
 def test_pip_chat_drafting_mode(client, auth_headers, monkeypatch):
     """POST /api/chat should recognize drafting requests, set ticket.draft_reply, and return draft info."""
     from server.models import Ticket, db
