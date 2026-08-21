@@ -98,3 +98,23 @@ test("runs table renders rows", async () => {
   expect(await screen.findByText("Audit Log Runs (1)")).toBeInTheDocument();
   expect(screen.getByText(/Escalate ticket/i)).toBeInTheDocument();
 });
+
+test("trace breakdown shows a copyable trace_id from the flat run-detail response", async () => {
+  // /api/runs/<id> actually returns a flat object (id, status, trace_id, steps,
+  // ...) — no `run` wrapper. Unlike renderAudit()'s default mock (which mirrors
+  // the component's buggy `.run?.field` reads), this one matches the real
+  // backend shape so the trace_id row's `selectedRunDetails.trace_id` read is
+  // exercised against actual production data.
+  renderAudit({
+    "GET /api/runs/17": () =>
+      jsonResponse({
+        id: 17,
+        status: "completed",
+        total_latency_ms: 5210,
+        trace_id: "eaa5ded750e3b61bd1f3b1205469f768",
+        steps: [],
+      }),
+  });
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  expect(await screen.findByText(/trace_id: eaa5ded750e3b61bd1f3b1205469f768/i)).toBeInTheDocument();
+});

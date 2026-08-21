@@ -252,6 +252,19 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                         </span>
                         <span>• Latency: {selectedRunDetails.run?.total_latency_ms || 0}ms</span>
                       </p>
+                      {selectedRunDetails.trace_id && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1.5 mt-1">
+                          <span>trace_id: {selectedRunDetails.trace_id}</span>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(selectedRunDetails.trace_id)}
+                            aria-label="copy trace id"
+                            title="Copy trace_id"
+                            className="text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                          >
+                            📋
+                          </button>
+                        </p>
+                      )}
                     </div>
                   </div>
 
