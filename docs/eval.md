@@ -40,7 +40,7 @@ For each task record: **success / partial / fail**, the **number of steps** take
 
 ### Automated harness (optional, complements the manual pass)
 
-`server/eval/run_eval.py` runs this same task set through the real retrieval + generation pipeline and scores each result with an LLM judge on the standard RAG metric split — **retrieval hit** (did `search_knowledge` return a real match, not `NO_POLICY_MATCH`) plus **faithfulness**, **answer relevance**, and **answer correctness** (0.0–1.0 each) on the generated answer. It's an offline dev tool, not wired into the app, the DB, or CI — run it manually after prompt/tool/model changes, same trigger as the manual pass above:
+`server/eval/run_eval.py` runs this same task set through the real retrieval + generation pipeline and scores each result with an LLM judge on the standard RAG metric split — **retrieval hit** (did `search_knowledge` return a real match, not `NO_POLICY_MATCH`), **context precision** (are the relevant retrieved chunks ranked near the top), **context recall** (of the golden answer's claims, how many does the retrieved context actually support — `should_succeed: false` items are skipped, since their `expected` is a behavior, not verifiable content) plus **faithfulness**, **answer relevance**, and **answer correctness** (0.0–1.0 each) on the generated answer. It's an offline dev tool, not wired into the app, the DB, or CI — run it manually after prompt/tool/model changes, same trigger as the manual pass above:
 
 ```bash
 python -m server.eval.run_eval

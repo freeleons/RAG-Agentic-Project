@@ -10,11 +10,11 @@ split:
                         matched chunks ranked with the relevant ones near
                         the top — reciprocal-rank-weighted; each chunk's
                         relevance is judged individually by a local Ollama
-                        model, see judge_chunk_relevance).
-                        Context Recall is NOT implemented: it needs the
-                        golden `expected` answers broken into individual
-                        claims to check which ones the retrieved context
-                        supports, and we don't have that claim-level data.
+                        model, see judge_chunk_relevance) plus context_recall
+                        (of the atomic claims in the golden `expected`
+                        answer, how many does the retrieved context support —
+                        claims are extracted from `expected` at run time by
+                        a judge call, see extract_claims).
   Generator quality  -> Faithfulness, Answer Relevance, Answer Correctness,
                         scored 0.0-1.0 by a judge LLM call.
 
@@ -25,6 +25,7 @@ model changes, same trigger as the manual pass documented in docs/eval.md:
 """
 
 import json
+import re
 import sys
 
 from flask import current_app
@@ -89,6 +90,88 @@ def context_precision(relevances):
         return None
     weighted_sum = sum(rel * (1.0 / rank) for rank, rel in enumerate(relevances, start=1))
     return round(weighted_sum / total_relevant, 3)
+
+
+CLAIM_EXTRACTION_PROMPT = """Break EXPECTED into a numbered list of atomic, independently-checkable
+factual claims (one fact per claim). Reply with a JSON array of strings only, no markdown fences.
+
+EXPECTED: {expected}
+
+Example output: ["Claim one.", "Claim two."]"""
+
+
+def extract_claims(expected):
+    """One judge-LLM call: decompose a golden `expected` answer into atomic
+    factual claims, so context_recall can check each one independently
+    against the retrieved context.
+
+    Unlike judge_chunk_relevance/judge_claim_support (simple YES/NO calls,
+    fine on the tiny local model), this uses the app's configured judge
+    model — decomposing a short phrase into non-overlapping atomic claims
+    without inventing extra ones needs more reasoning than `llama3.2:1b`
+    reliably gives: on short `expected` strings like a bare phone number it
+    would ignore the JSON-array instruction, echo the prompt's own example
+    text back as a "claim", or invent unstated facts (e.g. "the number is
+    from California"). Returns [] (not a hard failure) if the model still
+    doesn't reply with valid JSON; context_recall treats an empty claim list
+    as "nothing to score".
+    """
+    prompt = CLAIM_EXTRACTION_PROMPT.format(expected=expected)
+    res = generate([{"role": "user", "content": prompt}], tools=[])
+    raw = (res.get("content") or "").strip()
+    # The tiny model routinely wraps its answer in ```fences``` or adds a
+    # preamble/epilogue despite being told "no markdown fences" — pull out
+    # just the [...] array before parsing instead of failing on the wrapper.
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if match:
+        raw = match.group(0)
+    try:
+        claims = json.loads(raw)
+        return claims if isinstance(claims, list) else []
+    except json.JSONDecodeError:
+        return []
+
+
+CLAIM_SUPPORT_PROMPT = """Does RETRIEVED_CONTEXT support this CLAIM (can the claim be inferred from
+it)? Reply with exactly one word, YES or NO.
+
+CLAIM: {claim}
+
+RETRIEVED_CONTEXT: {context}
+
+Answer (YES or NO only):"""
+
+
+def judge_claim_support(claim, context):
+    """One local-Ollama call: is this single golden-answer claim backed by the
+    retrieved context? Same YES/NO judge pattern as judge_chunk_relevance."""
+    prompt = CLAIM_SUPPORT_PROMPT.format(claim=claim, context=(context or "")[:2000])
+    ollama_base = current_app.config["OLLAMA_BASE_URL"].rstrip("/") + "/v1"
+    res = generate(
+        [{"role": "user", "content": prompt}],
+        tools=[],
+        model=CHUNK_RELEVANCE_MODEL,
+        base_url=ollama_base,
+    )
+    answer = (res.get("content") or "").strip().upper()
+    return 1 if answer.startswith("YES") else 0
+
+
+def context_recall(claims, context):
+    """Fraction of the golden answer's claims that the retrieved context
+    actually supports.
+
+    Context Recall = (# claims attributable to context) / (# claims)
+
+    Returns None (prints as "?") when there are no claims to check — either
+    extraction failed, or (for a "should decline" item) `expected` describes
+    a behavior ("decline, don't invent a policy number") rather than
+    verifiable content, so there's nothing to recall against.
+    """
+    if not claims:
+        return None
+    supported = [judge_claim_support(c, context) for c in claims]
+    return round(sum(supported) / len(claims), 3)
 
 
 # Judge prompt: scores Faithfulness / Answer Relevance / Answer Correctness
@@ -187,6 +270,13 @@ def main():
             chunks = kb_result.get("chunks", []) if isinstance(kb_result, dict) else []
             relevances = [judge_chunk_relevance(item["goal"], c.get("text")) for c in chunks]
             precision = context_precision(relevances)
+            # context_recall: only meaningful for "should succeed" items —
+            # a "should decline" item's `expected` describes a behavior, not
+            # verifiable content, so there's nothing to break into claims.
+            recall = None
+            if item["should_succeed"]:
+                claims = extract_claims(item["expected"])
+                recall = context_recall(claims, context)
             scores = judge(item["goal"], context, answer, item["expected"])
             results.append({
                 "id": item["id"],
@@ -194,19 +284,20 @@ def main():
                 "should_succeed": item["should_succeed"],
                 "retrieval_hit": retrieval_hit,
                 "context_precision": precision,
+                "context_recall": recall,
                 "retrieved_context": context,
                 "answer": answer,
                 **scores,
             })
 
     # Human-readable table to stdout for a quick glance...
-    print(f"{'#':<3} {'retr':<5} {'prec':<6} {'faith':<6} {'relev':<6} {'correct':<8} goal")
+    print(f"{'#':<3} {'retr':<5} {'prec':<6} {'recall':<7} {'faith':<6} {'relev':<6} {'correct':<8} goal")
     for r in results:
         def fmt(v):
             return f"{v:.2f}" if isinstance(v, (int, float)) else "  ?  "
         print(
             f"{r['id']:<3} {'✅' if r['retrieval_hit'] else '❌':<5} "
-            f"{fmt(r['context_precision']):<6} "
+            f"{fmt(r['context_precision']):<6} {fmt(r['context_recall']):<7} "
             f"{fmt(r['faithfulness']):<6} {fmt(r['answer_relevance']):<6} {fmt(r['answer_correctness']):<8} "
             f"{r['goal'][:60]}"
         )
