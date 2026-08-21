@@ -96,3 +96,43 @@ circumstances) needed to answer the question, decline and say what information w
 be needed — even when the context contains adjacent, real policy text. Re-run
 `python -m server.eval.run_eval` afterward and confirm items 8 and 17 flip to
 `answer_correctness: 1.0` without regressing the 18/18 retrieval-hit rate.
+
+## A second instance of the same failure mode: KB-only instructions crowding out everything else
+
+While fixing a separate bug — `pip_chat()` had no multi-turn memory at all, see
+`fix/pip-chat-conversation-context` (PR #40) — manual testing surfaced a live example
+of exactly the failure mode described above, outside the eval set.
+
+**Repro:** turn 1, "My name is Dave." Turn 2, "What is my name?" Expected: "Dave."
+Actual: *"No matching policy was found in ApexCare documentation for this inquiry.
+Please consult HR / IT leadership for guidance."*
+
+This looked at first like the conversation-history fix hadn't worked. It had —
+inspecting `RunStep.llm_messages` directly in the database confirmed turn 1's exchange
+("my name is Mia" / Pip's reply) was genuinely present in turn 2's call to `generate()`.
+The model simply never used it, for a specific, findable reason:
+
+1. `has_knowledge_intent` ([`server/routes.py:1014-1018`](../server/routes.py#L1014-L1018))
+   is a keyword regex including `what (is|are)`. "What is my name?" matches it, so the
+   turn is routed straight to `SEARCH_KNOWLEDGE` — the same branch item 17 goes through.
+2. `search_knowledge` predictably finds nothing about anyone's name, so
+   `no_policy_match` is set.
+3. `PIP_SEARCH_KNOWLEDGE_SYSTEM_PROMPT`'s Rule 1 ("base your answer strictly on the
+   provided `AUDITED_POLICY_KNOWLEDGE_RESULT`. Never invent facts") applies regardless
+   of what else is in `messages` — so the model, correctly following that instruction,
+   ignores the conversation history sitting right next to it and outputs the canned
+   no-match response.
+
+In other words: passing history into the prompt is necessary but not sufficient. Once a
+turn is routed to `SEARCH_KNOWLEDGE`, the system prompt actively tells the model not to
+answer from anything *except* the KB result — conversation history included. This is
+the same root cause as item 17 (a "must answer only from this narrow source" rule with
+no carve-out for "the answer is actually sitting elsewhere in context"), just triggered
+by a different, over-broad routing keyword instead of a retrieval hit.
+
+**Proposed fix (not yet implemented, kept out of PR #40's scope on purpose):** narrow
+`has_knowledge_intent` so personal/self-referential phrasing ("what is my name",
+"what did I just say") doesn't trigger `SEARCH_KNOWLEDGE` on keyword match alone — or,
+short of that, add a line to `PIP_SEARCH_KNOWLEDGE_SYSTEM_PROMPT` telling the model to
+check conversation history for facts about the requester before falling back to the
+no-match template.
