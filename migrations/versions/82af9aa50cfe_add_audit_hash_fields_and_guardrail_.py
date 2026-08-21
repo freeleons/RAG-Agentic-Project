@@ -1,7 +1,6 @@
 """feat/audit-log-hardening: add audit hash fields to runs/run_steps and a
 guardrail_events table.
 
-中文：为 runs/run_steps 增加审计用的哈希字段，并新增 guardrail_events 表。
 
 Revision ID: 82af9aa50cfe
 Revises: a4b8c1d9e2f0
@@ -32,11 +31,7 @@ def upgrade():
     # builds), which had already created this table locally before Alembic
     # diffed the schema. Written by hand so a fresh DB that never ran
     # db.create_all() first still gets this table from `flask db upgrade`.
-    # 中文：autogenerate 没能检测到这张表——app.py 的 create_app() 每次建
-    # app context 都会调 db.create_all()（包括 `flask db migrate` 自己触发的
-    # 那次），本地已经先把这张表建出来了，Alembic 做 diff 时就看不出差异。
-    # 这里手写补上，这样一个从没跑过 db.create_all() 的全新数据库，也能靠
-    # `flask db upgrade` 拿到这张表。
+  
     op.create_table(
         "guardrail_events",
         sa.Column("id", sa.Integer(), nullable=False),
