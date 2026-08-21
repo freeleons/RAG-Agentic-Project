@@ -26,6 +26,7 @@ Every endpoint is wrapped in @require_auth, which provides g.user/g.is_admin.
 import json
 import os
 import re
+import time
 from datetime import date
 from flask import Blueprint, current_app, g, jsonify, request, send_from_directory
 from sqlalchemy import func
@@ -699,6 +700,18 @@ def _next_run_seq(run_id):
     return count + 1
 
 
+def _stamp_total_latency(run):
+    """Same aggregation as agent._finish — sum this run's step latencies onto
+    Run.total_latency_ms. pip_chat() times its own steps by hand (see the
+    RunStep(...) writes below) instead of going through observability.
+    record_step(), so nothing sets this column for it otherwise."""
+    run.total_latency_ms = (
+        db.session.query(func.coalesce(func.sum(RunStep.latency_ms), 0))
+        .filter_by(run_id=run.id)
+        .scalar()
+    )
+
+
 @api_bp.post("/tickets/<int:ticket_id>/triage")
 @require_auth
 def triage_ticket_endpoint(ticket_id):
@@ -1062,7 +1075,12 @@ def pip_chat():
         if not has_knowledge_intent:
             try:
                 classification_prompt = PIP_CLASSIFICATION_PROMPT.format(message_text=message_text)
+                classify_start = time.perf_counter()
                 class_res = generate([{"role": "user", "content": classification_prompt}], tools=[])
+                step1.latency_ms = int((time.perf_counter() - classify_start) * 1000)
+                usage = class_res.get("usage") or {}
+                step1.prompt_tokens = usage.get("prompt_tokens")
+                step1.completion_tokens = usage.get("completion_tokens")
                 class_content = (class_res.get("content") or "").strip().upper()
 
                 if "CHITCHAT" in class_content or "GENERAL" in class_content or ("NO" in class_content and "YES" not in class_content):
@@ -1092,6 +1110,7 @@ def pip_chat():
         )
         db.session.add(step2)
         db.session.commit()
+        search_start = time.perf_counter()
         try:
             kb_result = search_knowledge(message_text)
             if kb_result and "error" not in str(kb_result):
@@ -1099,9 +1118,11 @@ def pip_chat():
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
+            step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
         except Exception as e:
             step2.result = {"error": str(e)}
+            step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
 
     # Step 2: Select the dedicated system prompt based on route_flag
@@ -1141,6 +1162,7 @@ def pip_chat():
     if is_client_disconnected():
         current_app.logger.info("Chat generation aborted: client disconnected.")
         run.status = "stopped"
+        _stamp_total_latency(run)
         db.session.commit()
         return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
@@ -1160,12 +1182,18 @@ def pip_chat():
     db.session.add(step3)
     db.session.commit()
 
+    compose_start = time.perf_counter()
     try:
         res = generate(messages, tools=[])
+        step3.latency_ms = int((time.perf_counter() - compose_start) * 1000)
+        usage = res.get("usage") or {}
+        step3.prompt_tokens = usage.get("prompt_tokens")
+        step3.completion_tokens = usage.get("completion_tokens")
 
         if is_client_disconnected():
             current_app.logger.info("Chat generation aborted: client disconnected.")
             run.status = "stopped"
+            _stamp_total_latency(run)
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
@@ -1238,8 +1266,8 @@ def pip_chat():
         step3.result = {"content": content}
         run.status = "completed"
         # Audit fingerprint of what the user was actually shown.
-        # 中文：用户实际看到内容的审计指纹。
         run.final_output_hash = content_hash(content)
+        _stamp_total_latency(run)
         db.session.commit()
 
         resp_payload = {
@@ -1253,10 +1281,16 @@ def pip_chat():
             resp_payload["ticket_id"] = target_ticket.id
         return jsonify(resp_payload)
     except Exception as e:
+        # generate() may have raised before step3.latency_ms was set above, or
+        # something after it did — either way this is the honest elapsed time
+        # for the step that failed.
+        step3.latency_ms = int((time.perf_counter() - compose_start) * 1000)
+
         # The generate() call itself failed. A stop/disconnect racing with the
         # failure still wins and reports "stopped" rather than an error.
         if is_client_disconnected():
             run.status = "stopped"
+            _stamp_total_latency(run)
             db.session.commit()
             return jsonify({"reply": "Response stopped by user.", "status": "stopped", "run_id": run.id}), 499
 
@@ -1270,6 +1304,7 @@ def pip_chat():
 
         step3.result = {"error": str(e)}
         run.status = "failed"
+        _stamp_total_latency(run)
         db.session.commit()
 
         # Provide a graceful, honest failure message to the user
