@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import re
 
-from flask import Response, current_app, jsonify
+from flask import Response, current_app, g, jsonify
+
+from server.models import GuardrailEvent, db
+from server.utils import content_hash
 
 # Obvious jailbreak / prompt-hijack phrases. Cheap and imperfect — false
 # negatives are expected; this only catches the noisiest attempts.
@@ -57,6 +60,22 @@ def reject_if_injection(*texts: str, source: str) -> tuple[Response, int] | None
             matched,
             (text or "")[:120],
         )
+        # Durable record of the rejection, not just an app-log line — an app
+        # log rotates/scrolls away; this is what an audit query joins against.
+        # No Run exists yet (the request never got that far), so this is
+        # scoped to the user directly. The offending text is hashed, not
+        # stored verbatim — an injection probe is exactly the kind of content
+        # an audit log shouldn't keep in the clear.
+        if getattr(g, "user", None) is not None:
+            db.session.add(
+                GuardrailEvent(
+                    user_id=g.user.id,
+                    source=source,
+                    filter_name=matched,
+                    input_hash=content_hash(text),
+                )
+            )
+            db.session.commit()
         return (
             jsonify(
                 {

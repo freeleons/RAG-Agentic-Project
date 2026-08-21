@@ -7,6 +7,7 @@ Roadmap of this file:
     GET  /runs                  paginated run list (admins see all users)
     GET  /runs/<id>             one run with its full step trace
     POST /runs/<id>/stop        cancel a run mid-flight
+    GET  /guardrail-events      paginated guardrail-rejection log (admins see all users)
 
   Tickets (the demo HR helpdesk domain)
     GET   /tickets              list the user's tickets
@@ -33,14 +34,14 @@ from server.agent import resume_run, run_agent
 from server.auth import require_auth
 from server.hitl import execute_tool_with_hitl
 from server.llm import generate, llm_provider, stamp_run_llm_identity
-from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
+from server.models import Conversation, GuardrailEvent, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
 from server.tools import openai_tool_defs, validate_arguments
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.sanitization import reject_if_injection
-from server.utils import clean_draft_text, format_knowledge_answer, is_client_disconnected
+from server.utils import clean_draft_text, content_hash, format_knowledge_answer, is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
     PIP_CLASSIFICATION_PROMPT,
@@ -297,6 +298,45 @@ def list_runs():
             item["user_email"] = user.email
         runs.append(item)
     return jsonify({"runs": runs, "total": total, "page": page, "per_page": per_page})
+
+
+@api_bp.get("/guardrail-events")
+@require_auth
+def list_guardrail_events():
+    """Paginated guardrail-rejection log (newest first) — the read side of
+    GuardrailEvent. Non-admins see only their own rejections; admins see
+    everyone's, same role split as list_runs/_filtered_runs_query.
+    # 中文：guardrail 拦截记录的分页列表（最新的在前）——GuardrailEvent 的
+    # 读接口。非管理员只能看自己的拦截记录；管理员能看所有人的，
+    # 权限划分跟 list_runs/_filtered_runs_query 一致。
+    """
+    q = db.session.query(GuardrailEvent, User).join(User, GuardrailEvent.user_id == User.id)
+    if not g.is_admin:
+        q = q.filter(GuardrailEvent.user_id == g.user.id)
+    page = max(request.args.get("page", 1, type=int), 1)
+    per_page = min(max(request.args.get("per_page", 20, type=int), 1), 100)
+    total = q.count()
+    rows = (
+        q.order_by(GuardrailEvent.created_at.desc(), GuardrailEvent.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+    events = []
+    for event, user in rows:
+        item = {
+            "id": event.id,
+            "source": event.source,
+            "filter": event.filter_name,
+            "score": event.score,
+            "action": event.action,
+            "input_hash": event.input_hash,
+            "created_at": event.created_at.isoformat(),
+        }
+        if g.is_admin:
+            item["user_email"] = user.email
+        events.append(item)
+    return jsonify({"events": events, "total": total, "page": page, "per_page": per_page})
 
 
 @api_bp.get("/runs/<int:run_id>")
@@ -1087,6 +1127,15 @@ def pip_chat():
             {"role": "user", "content": message_text}
         ]
 
+    # Fingerprint the static template (not the per-request tickets_context/
+    # kb_context, which vary by design every call) so drift in the wording we
+    # actually wrote is detectable independent of the dynamic content around it.
+    # 中文：只对静态模板部分打指纹（不包括 tickets_context/kb_context——这两个
+    # 本来每次请求就该不一样），这样我们自己写的措辞有没有被改动，能独立于
+    # 周围动态内容被检测出来。
+    run.system_prompt_hash = content_hash(system_prompt)
+    db.session.commit()
+
     # Cancellation checks before final generation
     if is_client_disconnected():
         current_app.logger.info("Chat generation aborted: client disconnected.")
@@ -1187,6 +1236,9 @@ def pip_chat():
 
         step3.result = {"content": content}
         run.status = "completed"
+        # Audit fingerprint of what the user was actually shown.
+        # 中文：用户实际看到内容的审计指纹。
+        run.final_output_hash = content_hash(content)
         db.session.commit()
 
         resp_payload = {
