@@ -48,17 +48,17 @@ TRIAGE_USER_PROMPT = (
     "Please execute search_knowledge to find relevant ApexCare policy documents and compose a professional draft reply."
 )
 
-# Explicit 2-way classification router between CHITCHAT and SEARCH_KNOWLEDGE.
 # Note: Drafting is explicitly directed via a hardcoded flag/check and does NOT use LLM classification.
 PIP_CLASSIFICATION_PROMPT = (
-    "You are an intent classification routing assistant for ApexCare Support.\n"
-    "Classify the user's message into EXACTLY ONE of the following 2 categories:\n\n"
-    "1. CHITCHAT\n"
-    "   - ONLY greetings ('hi', 'hello', 'hey pip', 'good morning'), jokes, small talk ('how are you', 'how is the weather'), or playful banter with NO policy or work questions.\n\n"
-    "2. SEARCH_KNOWLEDGE\n"
-    "   - ALL inquiries regarding company policies (e.g. WFA, PTO, FSA, HSA, STD, LTD), employee benefits, financial limits, rollovers, deductibles, qualifying life events, HR/IT guidelines, tickets, or operational procedures.\n\n"
-    "User Message: \"{message_text}\"\n\n"
-    "Answer with EXACTLY ONE word ('CHITCHAT' or 'SEARCH_KNOWLEDGE') and nothing else:"
+    "You are a routing assistant. Your task is to decide if the user's query requires searching the company knowledge base, "
+    "which contains company policies, HR/IT guidelines, benefits and insurance plan documents (e.g. policy booklets, "
+    "carrier contact info, addresses, phone numbers, regulatory contacts), and employee support ticket details.\n\n"
+    "User Query: \"{message_text}\"\n\n"
+    "Default to 'YES' whenever the query could plausibly be answered by looking something up in a document — including "
+    "specific facts, figures, contact details, or addresses that appear inside policy or benefits paperwork. "
+    "Only answer 'NO' if the query is clearly a greeting, general chit-chat, a playful question (e.g., 'how is the "
+    "weather?', 'tell me a joke'), or has nothing to do with company operations, policies, or benefits.\n\n"
+    "Response (answer with exactly 'YES' or 'NO' and nothing else):"
 )
 
 # 1. GENERAL SCENARIO: Friendly Chit-Chat / Banter

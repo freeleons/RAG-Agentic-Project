@@ -20,7 +20,8 @@ def expand_knowledge_query(query: str) -> str:
         (r"\b(tuition|reimbursement|degree|certifications?|professional development)\b", "Tuition Reimbursement & Professional Development $5,250 $1,500 budget clawback"),
         (r"\b(qle|qualifying life event|life event|navigator)\b", "Qualifying Life Events QLE Employee Navigator Instructions enrollment 30 days"),
         (r"\b(std|short term disability|disability income|elimination period)\b", "Voluntary Short-Term Disability (STD) income coverage 60% maximum $1,800/week elimination period Day 8 26 weeks Vol STD 2026"),
-        (r"\b(dental|vision|guardian|out of network|out-of-network|group number|00539142)\b", "Guardian Group Benefits Certificate Booklet 00539142 Class 0001 Dental Expense Insurance Vision Care Deductibles $50 $0 out-of-network claim reimbursement PO Box 981573 El Paso TX 79998-1573"),
+        (r"\b(dental|vision|out of network|out-of-network|group number|00539142)\b", "Guardian Group Benefits Certificate Booklet 00539142 Class 0001 Dental Expense Insurance Vision Care Deductibles $50 $0 out-of-network claim reimbursement PO Box 981573 El Paso TX 79998-1573"),
+        (r"\b(guardian|sales office|guardian sales|mailing address|guardian address|guardian phone|guardian fax|guardian contact|state corporation commission|bureau of insurance|insurance regulator|file a complaint|department of labor)\b", "Guardian Sales Office Maple Lawn Office Three 8161 Maple Lawn Boulevard Suite 100 Maple Lawn Maryland 20759 Telephone Fax Virginia State Corporation Commission Bureau of Insurance regulatory contact"),
         (r"\b(id card|medical card|insurance card|temporary card|print id card|myuhc)\b", "myuhc.com How to print a temporary medical ID Card UnitedHealthcare digital engagement flier"),
     ]
 
@@ -69,6 +70,7 @@ def search_knowledge(query):
 
     core_query = extract_core_search_query(query)
     clean_message = core_query if core_query else query.strip()
+    clean_message = expand_knowledge_query(clean_message)
 
     # Failures return {"error": ...} instead of raising: the agent loop treats
     # that as an observation the model can react to (e.g. escalate), and

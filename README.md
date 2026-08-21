@@ -7,7 +7,9 @@
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL_16-336791?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
 
-> **ApexCare** is a production-grade, multi-tenant **Autonomous AI Support Triage Agent** and **RAG Knowledge Service** designed to assist enterprise HR and IT operations. Built from first principles using Python/Flask and React (TypeScript), it implements a customized **bounded reasoning loop**, **stateful Human-in-the-Loop (HITL) execution safety**, **prompt injection defense boundaries**, and a decorator-driven **observability & analytics system** to deliver auditability at scale.
+> **💡 The Problem:** In enterprise IT and HR operations, support specialists spend up to **40% of their workday** manually hunting down fragmented policy documents across wikis and PDFs. This friction leads to inconsistent answers, slow ticket resolution times, and agent burnout.
+> 
+> **🎯 The Solution:** **ApexCare** is a production-grade, multi-tenant **Autonomous AI Support Triage Agent** and **RAG Knowledge Service** built from first principles using Python/Flask and React (TypeScript). It automates policy retrieval, drafts grounded responses with an embedded copilot (**Pip**), and keeps specialists firmly in control through a **bounded reasoning loop**, **stateful Human-in-the-Loop (HITL) safety**, **prompt injection defense boundaries**, and comprehensive **observability & audit telemetry**.
 
 <details>
   <summary><b>📑 Table of Contents (Click to expand)</b></summary>
