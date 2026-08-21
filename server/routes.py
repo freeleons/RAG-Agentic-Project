@@ -306,9 +306,7 @@ def list_guardrail_events():
     """Paginated guardrail-rejection log (newest first) — the read side of
     GuardrailEvent. Non-admins see only their own rejections; admins see
     everyone's, same role split as list_runs/_filtered_runs_query.
-    # 中文：guardrail 拦截记录的分页列表（最新的在前）——GuardrailEvent 的
-    # 读接口。非管理员只能看自己的拦截记录；管理员能看所有人的，
-    # 权限划分跟 list_runs/_filtered_runs_query 一致。
+   
     """
     q = db.session.query(GuardrailEvent, User).join(User, GuardrailEvent.user_id == User.id)
     if not g.is_admin:
