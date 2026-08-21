@@ -1,6 +1,22 @@
+import hashlib
 import json
 import re
 from flask import request
+
+
+def content_hash(value) -> str | None:
+    """SHA-256 hex digest of a value (dict/list/str/etc.), for the audit trail.
+
+    Lets a RunStep/Run row carry an integrity fingerprint of its arguments,
+    result, or final answer without a second copy of the (possibly
+    PII-containing) content living anywhere else — verify by re-hashing the
+    plaintext and comparing, not by reading a duplicate. None in, None out,
+    so optional fields stay optional.
+    """
+    if value is None:
+        return None
+    payload = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def clean_draft_text(raw_text: str) -> str:

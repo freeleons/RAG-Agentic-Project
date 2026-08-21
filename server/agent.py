@@ -31,7 +31,7 @@ from server.loop_guard import LoopGuard
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
 from server.tools import openai_tool_defs, validate_arguments
-from server.utils import clean_draft_text, is_client_disconnected
+from server.utils import clean_draft_text, content_hash, is_client_disconnected
 
 # System prompt for the ticket-triage agent persona ("Pip"). Note the last
 # constraint: tool results are wrapped in <tool_result> tags and the model is
@@ -119,6 +119,9 @@ def _finish(run, status, answer):
         .filter_by(run_id=run.id)
         .scalar()
     )
+    # Audit fingerprint of what the user was actually shown — independent of
+    # the plaintext Message row above.
+    run.final_output_hash = content_hash(answer)
     db.session.commit()
     return {"run_id": run.id, "status": status, "answer": answer}
 
@@ -126,6 +129,10 @@ def _finish(run, status, answer):
 def run_agent(run, goal):
     """Run the bounded agent loop for a fresh user goal."""
     stamp_run_llm_identity(run)
+    # Fingerprint the system prompt template this run is actually using, so
+    # a later audit can tell "this run predates/postdates that prompt edit"
+    # from the DB alone, without diffing source history against timestamps.
+    run.system_prompt_hash = content_hash(SYSTEM_PROMPT)
     db.session.commit()
     # Build the initial prompt: system persona + earlier conversation turns
     # + the new goal. Only messages BEFORE the triggering one are history.
