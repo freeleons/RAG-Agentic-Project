@@ -98,3 +98,42 @@ test("runs table renders rows", async () => {
   expect(await screen.findByText("Audit Log Runs (1)")).toBeInTheDocument();
   expect(screen.getByText(/Escalate ticket/i)).toBeInTheDocument();
 });
+
+test("trace inspector distinguishes llm, retrieval, and generic tool execution steps", async () => {
+  const steps = [
+    {
+      seq: 1,
+      kind: "llm_call",
+      tool_name: null,
+      arguments: null,
+      result: { type: "tool_call", name: "search_knowledge" },
+      latency_ms: 450,
+    },
+    {
+      seq: 2,
+      kind: "tool_call",
+      tool_name: "search_knowledge",
+      arguments: { query: "VPN policy" },
+      result: { answer: "Use Pulse Secure", sources: ["vpn.md"] },
+      latency_ms: 120,
+    },
+    {
+      seq: 3,
+      kind: "tool_call",
+      tool_name: "escalate",
+      arguments: { ticket_id: "T-1" },
+      result: { status: "escalated" },
+      latency_ms: 80,
+    },
+  ];
+
+  renderAudit({
+    "GET /api/runs/17": () => jsonResponse({ run: RUNS_LIST.runs[0], steps }),
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: /audit logs/i }));
+  expect(await screen.findByText(/Seq #1 — 🤖 LLM Reasoning Call/i)).toBeInTheDocument();
+  expect(screen.getByText(/Seq #2 — 🔍 Retrieval/i)).toBeInTheDocument();
+  expect(screen.getByText(/Seq #3 — 🛠️ Tool Execution/i)).toBeInTheDocument();
+});
+
