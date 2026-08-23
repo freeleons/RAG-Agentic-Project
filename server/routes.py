@@ -74,6 +74,8 @@ def _serialize_steps(run, include_messages=False):
             "result": s.result,
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
+            "arguments_hash": s.arguments_hash,
+            "result_hash": s.result_hash,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -88,6 +90,8 @@ def _serialize_run(run):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
+        "system_prompt_hash": run.system_prompt_hash,
+        "final_output_hash": run.final_output_hash,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -329,7 +333,7 @@ def list_guardrail_events():
             "score": event.score,
             "action": event.action,
             "input_hash": event.input_hash,
-            "created_at": event.created_at.isoformat(),
+            "created_at": event.created_at.isoformat() if event.created_at else None,
         }
         if g.is_admin:
             item["user_email"] = user.email
@@ -352,7 +356,9 @@ def get_run(run_id):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
-        "created_at": run.created_at.isoformat(),
+        "system_prompt_hash": run.system_prompt_hash,
+        "final_output_hash": run.final_output_hash,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
         "steps": _serialize_steps(run, include_messages=True),
     }
     # Surface a pending confirmation so the UI can render approve/reject buttons.
