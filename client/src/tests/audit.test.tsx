@@ -149,6 +149,7 @@ test("trace inspector distinguishes llm, retrieval, and generic tool execution s
       arguments: { query: "VPN policy" },
       result: { answer: "Use Pulse Secure", sources: ["vpn.md"] },
       latency_ms: 120,
+      span_id: "a1b2c3d4e5f60718",
     },
     {
       seq: 3,
@@ -168,4 +169,5 @@ test("trace inspector distinguishes llm, retrieval, and generic tool execution s
   expect(await screen.findByText(/Seq #1 — 🤖 LLM Reasoning Call/i)).toBeInTheDocument();
   expect(screen.getByText(/Seq #2 — 🔍 Retrieval/i)).toBeInTheDocument();
   expect(screen.getByText(/Seq #3 — 🛠️ Tool Execution/i)).toBeInTheDocument();
+  expect(screen.getByText(/span: a1b2c3d4e5f60718/i)).toBeInTheDocument();
 });

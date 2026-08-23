@@ -283,7 +283,14 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                           <span className="font-bold text-blue-700 dark:text-blue-400">
                             Seq #{step.seq} — {getStepLabel(step)}
                           </span>
-                          <span className="text-slate-500 dark:text-slate-400 font-bold">{step.latency_ms}ms</span>
+                          <div className="flex items-center gap-2">
+                            {step.span_id && (
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                                span: {step.span_id}
+                              </span>
+                            )}
+                            <span className="text-slate-500 dark:text-slate-400 font-bold">{step.latency_ms}ms</span>
+                          </div>
                         </div>
 
                         {step.tool_name && (

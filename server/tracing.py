@@ -56,8 +56,12 @@ def _tracer_provider():
 
 
 def _parent_context(trace_id_hex):
+    try:
+        tid = int(trace_id_hex, 16) if trace_id_hex else 1
+    except (TypeError, ValueError):
+        tid = 1
     ctx = SpanContext(
-        trace_id=int(trace_id_hex, 16),
+        trace_id=tid,
         span_id=_ROOT_SPAN_ID,
         is_remote=True,
         trace_flags=TraceFlags(TraceFlags.SAMPLED),

@@ -76,6 +76,8 @@ def _serialize_steps(run, include_messages=False):
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
             "span_id": s.span_id,
+            "arguments_hash": getattr(s, "arguments_hash", None),
+            "result_hash": getattr(s, "result_hash", None),
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -91,6 +93,8 @@ def _serialize_run(run):
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "trace_id": run.trace_id,
+        "system_prompt_hash": getattr(run, "system_prompt_hash", None),
+        "final_output_hash": getattr(run, "final_output_hash", None),
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -356,7 +360,9 @@ def get_run(run_id):
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "trace_id": run.trace_id,
-        "created_at": run.created_at.isoformat(),
+        "system_prompt_hash": getattr(run, "system_prompt_hash", None),
+        "final_output_hash": getattr(run, "final_output_hash", None),
+        "created_at": run.created_at.isoformat() if run.created_at else None,
         "steps": _serialize_steps(run, include_messages=True),
     }
     # Surface a pending confirmation so the UI can render approve/reject buttons.
