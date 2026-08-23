@@ -1033,7 +1033,8 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "explicit_draft_flag", "route": "DRAFT"}
+            result={"status": "explicit_draft_flag", "route": "DRAFT"},
+            result_hash=content_hash({"status": "explicit_draft_flag", "route": "DRAFT"}),
         )
         db.session.add(step1)
         db.session.commit()
@@ -1043,7 +1044,8 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "classifying"}
+            result={"status": "classifying"},
+            result_hash=content_hash({"status": "classifying"}),
         )
         db.session.add(step1)
         db.session.commit()
@@ -1072,6 +1074,7 @@ def pip_chat():
             route_flag = "SEARCH_KNOWLEDGE"
 
         step1.result = {"status": "classified", "route": route_flag}
+        step1.result_hash = content_hash(step1.result)
         db.session.commit()
 
     # Step 1: Knowledge Search (always executed for SEARCH_KNOWLEDGE and DRAFT)
@@ -1079,13 +1082,16 @@ def pip_chat():
     kb_result = None
     no_policy_match = False
     if route_flag in ("SEARCH_KNOWLEDGE", "DRAFT"):
+        step2_args = {"query": message_text}
         step2 = RunStep(
             run_id=run.id,
             seq=2,
             kind="tool_call",
             tool_name="search_knowledge",
-            arguments={"query": message_text},
-            result={"status": "searching"}
+            arguments=step2_args,
+            arguments_hash=content_hash(step2_args),
+            result={"status": "searching"},
+            result_hash=content_hash({"status": "searching"}),
         )
         db.session.add(step2)
         db.session.commit()
@@ -1096,9 +1102,11 @@ def pip_chat():
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
+            step2.result_hash = content_hash(kb_result)
             db.session.commit()
         except Exception as e:
             step2.result = {"error": str(e)}
+            step2.result_hash = content_hash(step2.result)
             db.session.commit()
 
     # Step 2: Select the dedicated system prompt based on route_flag
@@ -1152,7 +1160,8 @@ def pip_chat():
         seq=3,
         kind="llm_call",
         llm_messages=messages,
-        result={"status": "formulating"}
+        result={"status": "formulating"},
+        result_hash=content_hash({"status": "formulating"}),
     )
     db.session.add(step3)
     db.session.commit()
@@ -1233,6 +1242,7 @@ def pip_chat():
                 db.session.commit()
 
         step3.result = {"content": content}
+        step3.result_hash = content_hash(step3.result)
         run.status = "completed"
         # Audit fingerprint of what the user was actually shown.
         # 中文：用户实际看到内容的审计指纹。
