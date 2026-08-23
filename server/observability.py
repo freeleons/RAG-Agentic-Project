@@ -7,14 +7,13 @@ feat/obs-provider-error-type: one RunStep per LLM/tool call (one inference
 span). Run.id is the trace; RunStep.seq is span order. We store
 gen_ai.provider.name on Run and error.type on failed steps.
 
-中文：每次 LLM/工具调用对应一条 RunStep（一次推理 span）。Run.id 即 trace，
-RunStep.seq 为 span 顺序；Run 存 gen_ai.provider.name，失败步骤存 error.type。
 """
 
 import time
 
 from server.llm import classify_error_type
 from server.models import RunStep, db
+from server.utils import content_hash
 
 
 def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_messages=None):
@@ -38,6 +37,9 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
         usage = result.pop("usage") or {}
     # The result column is JSON; wrap non-dict values so storage is uniform.
     stored = result if isinstance(result, dict) else {"value": result}
+    # Audit fingerprints, computed from exactly what gets stored in the
+    # plaintext columns below (post usage-extraction) so a later re-hash of
+    # `arguments`/`result` always matches.
     step = RunStep(
         run_id=run_id,
         seq=seq,
@@ -50,6 +52,8 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
         error_type=error_type,
+        arguments_hash=content_hash(arguments),
+        result_hash=content_hash(stored),
     )
     db.session.add(step)
     db.session.commit()

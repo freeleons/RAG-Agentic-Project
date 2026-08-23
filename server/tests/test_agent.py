@@ -32,6 +32,25 @@ def test_single_tool_then_final_answer(app, run, monkeypatch):
     assert saved.content == "Reset it in Settings."
 
 
+def test_run_agent_stamps_system_prompt_and_final_output_hashes(app, run, monkeypatch):
+    """feat/audit-log-hardening: a run records which system-prompt version it
+    used and a fingerprint of what the user was shown.
+
+    """
+    from server.agent import SYSTEM_PROMPT, run_agent
+    from server.utils import content_hash
+
+    monkeypatch.setattr(
+        "server.agent.generate",
+        scripted({"type": "final", "content": "All set."}),
+    )
+
+    outcome = run_agent(run, "Quick question")
+    assert outcome["status"] == "completed"
+    assert run.system_prompt_hash == content_hash(SYSTEM_PROMPT)
+    assert run.final_output_hash == content_hash("All set.")
+
+
 def test_loop_terminates_at_max_steps(app, run, monkeypatch):
     from server.agent import run_agent
     from server.tools import TOOLS

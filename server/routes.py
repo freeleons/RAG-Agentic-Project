@@ -7,6 +7,7 @@ Roadmap of this file:
     GET  /runs                  paginated run list (admins see all users)
     GET  /runs/<id>             one run with its full step trace
     POST /runs/<id>/stop        cancel a run mid-flight
+    GET  /guardrail-events      paginated guardrail-rejection log (admins see all users)
 
   Tickets (the demo HR helpdesk domain)
     GET   /tickets              list the user's tickets
@@ -33,14 +34,14 @@ from server.agent import resume_run, run_agent
 from server.auth import require_auth
 from server.hitl import execute_tool_with_hitl
 from server.llm import generate, llm_provider, stamp_run_llm_identity
-from server.models import Conversation, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
+from server.models import Conversation, GuardrailEvent, Message, PendingAction, Run, RunStep, Ticket, User, db, utcnow
 from server.observability import record_step
 from server.tools import openai_tool_defs, validate_arguments
 from server.tools.search_knowledge import search_knowledge
 from server.knowledge_sync import sync_one_resolved_ticket
 from server.urgency import apply_priority, build_urgency_messages, classify_priority
 from server.sanitization import reject_if_injection
-from server.utils import clean_draft_text, format_knowledge_answer, is_client_disconnected
+from server.utils import clean_draft_text, content_hash, format_knowledge_answer, is_client_disconnected
 from server.prompts import (
     TRIAGE_USER_PROMPT,
     PIP_CLASSIFICATION_PROMPT,
@@ -73,6 +74,8 @@ def _serialize_steps(run, include_messages=False):
             "result": s.result,
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
+            "arguments_hash": s.arguments_hash,
+            "result_hash": s.result_hash,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -87,6 +90,8 @@ def _serialize_run(run):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
+        "system_prompt_hash": run.system_prompt_hash,
+        "final_output_hash": run.final_output_hash,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -299,6 +304,43 @@ def list_runs():
     return jsonify({"runs": runs, "total": total, "page": page, "per_page": per_page})
 
 
+@api_bp.get("/guardrail-events")
+@require_auth
+def list_guardrail_events():
+    """Paginated guardrail-rejection log (newest first) — the read side of
+    GuardrailEvent. Non-admins see only their own rejections; admins see
+    everyone's, same role split as list_runs/_filtered_runs_query.
+   
+    """
+    q = db.session.query(GuardrailEvent, User).join(User, GuardrailEvent.user_id == User.id)
+    if not g.is_admin:
+        q = q.filter(GuardrailEvent.user_id == g.user.id)
+    page = max(request.args.get("page", 1, type=int), 1)
+    per_page = min(max(request.args.get("per_page", 20, type=int), 1), 100)
+    total = q.count()
+    rows = (
+        q.order_by(GuardrailEvent.created_at.desc(), GuardrailEvent.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+    events = []
+    for event, user in rows:
+        item = {
+            "id": event.id,
+            "source": event.source,
+            "filter": event.filter_name,
+            "score": event.score,
+            "action": event.action,
+            "input_hash": event.input_hash,
+            "created_at": event.created_at.isoformat() if event.created_at else None,
+        }
+        if g.is_admin:
+            item["user_email"] = user.email
+        events.append(item)
+    return jsonify({"events": events, "total": total, "page": page, "per_page": per_page})
+
+
 @api_bp.get("/runs/<int:run_id>")
 @require_auth
 def get_run(run_id):
@@ -314,7 +356,9 @@ def get_run(run_id):
         "model": run.model,
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
-        "created_at": run.created_at.isoformat(),
+        "system_prompt_hash": run.system_prompt_hash,
+        "final_output_hash": run.final_output_hash,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
         "steps": _serialize_steps(run, include_messages=True),
     }
     # Surface a pending confirmation so the UI can render approve/reject buttons.
@@ -995,7 +1039,8 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "explicit_draft_flag", "route": "DRAFT"}
+            result={"status": "explicit_draft_flag", "route": "DRAFT"},
+            result_hash=content_hash({"status": "explicit_draft_flag", "route": "DRAFT"}),
         )
         db.session.add(step1)
         db.session.commit()
@@ -1005,7 +1050,8 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "classifying"}
+            result={"status": "classifying"},
+            result_hash=content_hash({"status": "classifying"}),
         )
         db.session.add(step1)
         db.session.commit()
@@ -1034,6 +1080,7 @@ def pip_chat():
             route_flag = "SEARCH_KNOWLEDGE"
 
         step1.result = {"status": "classified", "route": route_flag}
+        step1.result_hash = content_hash(step1.result)
         db.session.commit()
 
     # Step 1: Knowledge Search (always executed for SEARCH_KNOWLEDGE and DRAFT)
@@ -1041,13 +1088,16 @@ def pip_chat():
     kb_result = None
     no_policy_match = False
     if route_flag in ("SEARCH_KNOWLEDGE", "DRAFT"):
+        step2_args = {"query": message_text}
         step2 = RunStep(
             run_id=run.id,
             seq=2,
             kind="tool_call",
             tool_name="search_knowledge",
-            arguments={"query": message_text},
-            result={"status": "searching"}
+            arguments=step2_args,
+            arguments_hash=content_hash(step2_args),
+            result={"status": "searching"},
+            result_hash=content_hash({"status": "searching"}),
         )
         db.session.add(step2)
         db.session.commit()
@@ -1058,9 +1108,11 @@ def pip_chat():
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
+            step2.result_hash = content_hash(kb_result)
             db.session.commit()
         except Exception as e:
             step2.result = {"error": str(e)}
+            step2.result_hash = content_hash(step2.result)
             db.session.commit()
 
     # Prior turns in this conversation, so follow-ups ("and how does it roll
@@ -1100,6 +1152,15 @@ def pip_chat():
             {"role": "user", "content": message_text}
         ]
 
+    # Fingerprint the static template (not the per-request tickets_context/
+    # kb_context, which vary by design every call) so drift in the wording we
+    # actually wrote is detectable independent of the dynamic content around it.
+    # 中文：只对静态模板部分打指纹（不包括 tickets_context/kb_context——这两个
+    # 本来每次请求就该不一样），这样我们自己写的措辞有没有被改动，能独立于
+    # 周围动态内容被检测出来。
+    run.system_prompt_hash = content_hash(system_prompt)
+    db.session.commit()
+
     # Cancellation checks before final generation
     if is_client_disconnected():
         current_app.logger.info("Chat generation aborted: client disconnected.")
@@ -1118,7 +1179,8 @@ def pip_chat():
         seq=3,
         kind="llm_call",
         llm_messages=messages,
-        result={"status": "formulating"}
+        result={"status": "formulating"},
+        result_hash=content_hash({"status": "formulating"}),
     )
     db.session.add(step3)
     db.session.commit()
@@ -1199,7 +1261,10 @@ def pip_chat():
                 db.session.commit()
 
         step3.result = {"content": content}
+        step3.result_hash = content_hash(step3.result)
         run.status = "completed"
+        # Audit fingerprint of what the user was actually shown.
+        run.final_output_hash = content_hash(content)
         # Persist the reply so the next turn's history_messages query picks it up.
         db.session.add(Message(conversation_id=conv.id, role="assistant", content=content))
         db.session.commit()
