@@ -146,6 +146,56 @@ def test_pip_chat_routes(client, auth_headers, monkeypatch):
         assert s.result_hash is not None
 
 
+def test_pip_chat_records_latency_and_tokens(client, auth_headers, monkeypatch):
+    """pip_chat() times its own steps by hand instead of going through
+    observability.record_step() (see the module docstring on pip_chat), which
+    used to mean latency_ms/prompt_tokens/completion_tokens stayed NULL for
+    every chat-originated RunStep and Run.total_latency_ms was never set —
+    the Audit tab's stat cards summed to 0 for real chat traffic. This pins
+    the fix: each step's own timing/usage lands on its RunStep, and the run
+    total is the sum of them.
+    """
+    from server.models import Run, RunStep, db
+
+    def mock_generate(messages, tools):
+        if len(messages) == 1 and "routing assistant" in messages[0]["content"]:
+            return {"type": "final", "content": "YES", "usage": {"prompt_tokens": 12, "completion_tokens": 3}}
+        return {
+            "type": "final",
+            "content": "Here's the PTO policy.",
+            "usage": {"prompt_tokens": 200, "completion_tokens": 40},
+        }
+
+    monkeypatch.setattr("server.routes.generate", mock_generate)
+    monkeypatch.setattr(
+        "server.routes.search_knowledge",
+        lambda q: {"answer": "Official PTO policy details...", "sources": ["PTO.pdf"]},
+    )
+
+    # Deliberately avoids the hardcoded knowledge-intent keywords (policy,
+    # pto, ticket, ...) so route_flag comes from the classification LLM call
+    # below rather than the keyword shortcut — otherwise step1 never calls
+    # generate() at all and legitimately has no latency/tokens to record.
+    resp = client.post("/api/chat", json={"message": "I have a question for the team"}, headers=auth_headers)
+    assert resp.status_code == 200
+    run_id = resp.get_json()["run_id"]
+
+    run = db.session.get(Run, run_id)
+    steps = RunStep.query.filter_by(run_id=run_id).order_by(RunStep.seq).all()
+    assert [s.kind for s in steps] == ["llm_call", "tool_call", "llm_call"]
+    assert all(s.latency_ms is not None and s.latency_ms >= 0 for s in steps)
+
+    classify_step, search_step, compose_step = steps
+    assert classify_step.prompt_tokens == 12
+    assert classify_step.completion_tokens == 3
+    assert compose_step.prompt_tokens == 200
+    assert compose_step.completion_tokens == 40
+    # search_knowledge isn't an LLM call — no token usage to record for it.
+    assert search_step.prompt_tokens is None
+
+    assert run.total_latency_ms == sum(s.latency_ms for s in steps)
+
+
 def test_pip_chat_maintains_conversation_context(client, auth_headers, monkeypatch):
     """A second /api/chat turn must see the first turn's exchange, so follow-up
     questions ("what's my name?") resolve against what was already said instead
