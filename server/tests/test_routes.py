@@ -135,6 +135,16 @@ def test_pip_chat_routes(client, auth_headers, monkeypatch):
     assert "You are Pip" in system_msg["content"]
     assert "General Chit-Chat" in system_msg["content"]
 
+    # Assert audit hashes on Run and RunSteps
+    from server.models import Run, RunStep, db
+    run_id = resp.get_json()["run_id"]
+    chat_run = db.session.get(Run, run_id)
+    assert chat_run.system_prompt_hash is not None
+    assert chat_run.final_output_hash is not None
+    steps = RunStep.query.filter_by(run_id=run_id).all()
+    for s in steps:
+        assert s.result_hash is not None
+
 
 def test_pip_chat_records_latency_and_tokens(client, auth_headers, monkeypatch):
     """pip_chat() times its own steps by hand instead of going through

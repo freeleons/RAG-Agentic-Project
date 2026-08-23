@@ -76,8 +76,8 @@ def _serialize_steps(run, include_messages=False):
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
             "span_id": s.span_id,
-            "arguments_hash": getattr(s, "arguments_hash", None),
-            "result_hash": getattr(s, "result_hash", None),
+            "arguments_hash": s.arguments_hash,
+            "result_hash": s.result_hash,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -93,8 +93,8 @@ def _serialize_run(run):
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "trace_id": run.trace_id,
-        "system_prompt_hash": getattr(run, "system_prompt_hash", None),
-        "final_output_hash": getattr(run, "final_output_hash", None),
+        "system_prompt_hash": run.system_prompt_hash,
+        "final_output_hash": run.final_output_hash,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -336,7 +336,7 @@ def list_guardrail_events():
             "score": event.score,
             "action": event.action,
             "input_hash": event.input_hash,
-            "created_at": event.created_at.isoformat(),
+            "created_at": event.created_at.isoformat() if event.created_at else None,
         }
         if g.is_admin:
             item["user_email"] = user.email
@@ -360,8 +360,8 @@ def get_run(run_id):
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "trace_id": run.trace_id,
-        "system_prompt_hash": getattr(run, "system_prompt_hash", None),
-        "final_output_hash": getattr(run, "final_output_hash", None),
+        "system_prompt_hash": run.system_prompt_hash,
+        "final_output_hash": run.final_output_hash,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "steps": _serialize_steps(run, include_messages=True),
     }
@@ -1055,7 +1055,8 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "explicit_draft_flag", "route": "DRAFT"}
+            result={"status": "explicit_draft_flag", "route": "DRAFT"},
+            result_hash=content_hash({"status": "explicit_draft_flag", "route": "DRAFT"}),
         )
         db.session.add(step1)
         db.session.commit()
@@ -1065,7 +1066,8 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "classifying"}
+            result={"status": "classifying"},
+            result_hash=content_hash({"status": "classifying"}),
         )
         db.session.add(step1)
         db.session.commit()
@@ -1099,6 +1101,7 @@ def pip_chat():
             route_flag = "SEARCH_KNOWLEDGE"
 
         step1.result = {"status": "classified", "route": route_flag}
+        step1.result_hash = content_hash(step1.result)
         db.session.commit()
 
     # Step 1: Knowledge Search (always executed for SEARCH_KNOWLEDGE and DRAFT)
@@ -1106,13 +1109,16 @@ def pip_chat():
     kb_result = None
     no_policy_match = False
     if route_flag in ("SEARCH_KNOWLEDGE", "DRAFT"):
+        step2_args = {"query": message_text}
         step2 = RunStep(
             run_id=run.id,
             seq=2,
             kind="tool_call",
             tool_name="search_knowledge",
-            arguments={"query": message_text},
-            result={"status": "searching"}
+            arguments=step2_args,
+            arguments_hash=content_hash(step2_args),
+            result={"status": "searching"},
+            result_hash=content_hash({"status": "searching"}),
         )
         db.session.add(step2)
         db.session.commit()
@@ -1124,10 +1130,12 @@ def pip_chat():
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
+            step2.result_hash = content_hash(kb_result)
             step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
         except Exception as e:
             step2.result = {"error": str(e)}
+            step2.result_hash = content_hash(step2.result)
             step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
 
@@ -1196,7 +1204,8 @@ def pip_chat():
         seq=3,
         kind="llm_call",
         llm_messages=messages,
-        result={"status": "formulating"}
+        result={"status": "formulating"},
+        result_hash=content_hash({"status": "formulating"}),
     )
     db.session.add(step3)
     db.session.commit()
@@ -1283,6 +1292,7 @@ def pip_chat():
                 db.session.commit()
 
         step3.result = {"content": content}
+        step3.result_hash = content_hash(step3.result)
         run.status = "completed"
         # Audit fingerprint of what the user was actually shown.
         run.final_output_hash = content_hash(content)
