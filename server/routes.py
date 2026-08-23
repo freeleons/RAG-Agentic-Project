@@ -1070,8 +1070,8 @@ def pip_chat():
         {"role": m.role, "content": m.content}
         for m in Message.query.filter(
             Message.conversation_id == conv.id, Message.id != msg.id
-        ).order_by(Message.id).all()
-    ][-20:]
+        ).order_by(Message.id.desc()).limit(20).all()[::-1]
+    ]
 
     # Step 2: Select the dedicated system prompt based on route_flag
     if route_flag == "GENERAL":
