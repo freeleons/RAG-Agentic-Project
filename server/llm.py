@@ -105,22 +105,19 @@ def wait_for_retry(attempt: int, base: float = 2.0, max_retry_after: float = MAX
     return exp + jitter
 
 
-def _endpoint_and_headers(base_url=None):
+def _endpoint_and_headers(base_url=None, api_key=None):
     """Pick the chat-completions URL + auth headers from config.
 
     Hosted endpoint wins if configured; otherwise fall back to local Ollama
     (whose OpenAI-compatible API lives under /v1 and needs no auth).
 
-    `base_url`, when given, skips config entirely and talks to that host
-    with no auth header — used by callers (currently just the eval harness)
-    that need to force a *specific* backend (e.g. local Ollama) for one call,
-    regardless of what AGENT_API_BASE_URL is set to for the rest of the app.
-    中文：`base_url` 传入时跳过配置直接打这个地址（不带鉴权头）——目前只有
-    eval 脚本在用，用来强制某一次调用走指定后端（比如本地 Ollama），
-    不受全局 AGENT_API_BASE_URL 设置影响。
+    `base_url`, when given, skips config entirely and talks to that host.
+    If `api_key` is provided (or configured AGENT_API_KEY matches), sets the Bearer auth header.
     """
     if base_url:
-        return f"{base_url.rstrip('/')}/chat/completions", {}
+        key = api_key or (current_app.config.get("AGENT_API_KEY") if current_app.config.get("AGENT_API_BASE_URL") and current_app.config["AGENT_API_BASE_URL"].rstrip("/") in base_url else None)
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        return f"{base_url.rstrip('/')}/chat/completions", headers
     cfg = current_app.config
     if cfg.get("AGENT_API_BASE_URL"):
         base = cfg["AGENT_API_BASE_URL"].rstrip("/")
@@ -131,7 +128,7 @@ def _endpoint_and_headers(base_url=None):
     return f"{base}/chat/completions", headers
 
 
-def generate(messages, tools, max_retries=3, timeout=120, model=None, base_url=None):
+def generate(messages, tools, max_retries=3, timeout=120, model=None, base_url=None, api_key=None):
     """One model call. Returns {"type": "final", "content": str} or
     {"type": "tool_call", "name": str, "arguments": dict, "call_id": str}.
 
@@ -142,20 +139,11 @@ def generate(messages, tools, max_retries=3, timeout=120, model=None, base_url=N
     `tools` is the JSON tool schema from tools.openai_tool_defs() (or empty
     for plain chat). Raises LLMError only after all retries are exhausted.
 
-    `model` and `base_url` are optional overrides for AGENT_MODEL /
-    AGENT_API_BASE_URL — every production caller (agent.py, routes.py) omits
-    them and gets the configured model as before; this only exists so a
-    caller can point one specific call at a different backend without
-    touching app config (e.g. the eval harness routing its high-volume,
-    low-stakes chunk-relevance judging to a free local model instead of the
-    paid one the rest of the app uses).
-    中文：`model`/`base_url` 是可选的覆盖参数——生产环境里的调用方（agent.py、
-    routes.py）都不传，行为跟以前完全一样，走配置里的模型。这两个参数只是
-    为了让某次调用能单独指向另一个后端，不用动全局配置（比如 eval 脚本把
-    调用量大、但要求不高的"chunk 相不相关"判断丢给本地免费小模型，跟应用
-    其余部分用的付费模型分开）。
+    `model`, `base_url`, and `api_key` are optional overrides for AGENT_MODEL /
+    AGENT_API_BASE_URL / AGENT_API_KEY — every production caller (agent.py, routes.py)
+    omits them and gets the configured model as before.
     """
-    url, headers = _endpoint_and_headers(base_url)
+    url, headers = _endpoint_and_headers(base_url, api_key)
     payload = {"model": model or current_app.config["AGENT_MODEL"], "messages": messages}
     if tools:
         payload["tools"] = tools

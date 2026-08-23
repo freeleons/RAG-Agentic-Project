@@ -25,6 +25,8 @@ model changes, same trigger as the manual pass documented in docs/eval.md:
 """
 
 import json
+import logging
+import os
 import re
 import sys
 
@@ -39,9 +41,8 @@ from server.prompts import (
 )
 from server.tools.search_knowledge import search_knowledge
 
-# judge call on a free local model instead (see judge_chunk_relevance below).
+logger = logging.getLogger(__name__)
 
-CHUNK_RELEVANCE_MODEL = "llama3.2:1b"
 CHUNK_RELEVANCE_PROMPT = """Does this document excerpt help answer the question? Reply with exactly one word, YES or NO.
 
 QUESTION: {question}
@@ -51,25 +52,46 @@ EXCERPT: {excerpt}
 Answer (YES or NO only):"""
 
 
-def judge_chunk_relevance(question, chunk_text):
-    """One local-Ollama call: is this single retrieved chunk relevant to the question?
+def get_eval_model_config():
+    """Resolve model and base_url for eval judgments in an LLM-agnostic way.
 
-    Deliberately routed to a free, tiny local model (via generate()'s model/
-    base_url overrides) instead of the app's configured paid model — this
-    runs once per retrieved chunk (up to 4x per golden-set item), and a
-    plain yes/no relevance call doesn't need frontier reasoning.
+    Defaults to the application's configured AGENT_MODEL (e.g. Gemini Flash,
+    GPT-4o mini, or Ollama) using the standard configured API endpoint.
+    Optionally allows overriding via EVAL_JUDGE_MODEL, EVAL_CHUNK_MODEL,
+    and EVAL_CHUNK_BASE_URL environment variables.
     """
-    excerpt = (chunk_text or "")[:800]  # keep the tiny model's prompt short and fast
+    default_model = current_app.config.get("AGENT_MODEL", "llama3.1:8b")
+    judge_model = os.environ.get("EVAL_JUDGE_MODEL", default_model)
+    chunk_model = os.environ.get("EVAL_CHUNK_MODEL", judge_model)
+    chunk_base_url = os.environ.get("EVAL_CHUNK_BASE_URL") or None
+    return {
+        "judge_model": judge_model,
+        "chunk_model": chunk_model,
+        "chunk_base_url": chunk_base_url,
+    }
+
+
+def judge_chunk_relevance(question, chunk_text):
+    """Is this single retrieved chunk relevant to the question?
+
+    Uses the configured eval model (defaults to AGENT_MODEL, e.g. Gemini Flash,
+    or EVAL_CHUNK_MODEL if specified).
+    """
+    excerpt = (chunk_text or "")[:800]  # keep the model prompt short and fast
     prompt = CHUNK_RELEVANCE_PROMPT.format(question=question, excerpt=excerpt)
-    ollama_base = current_app.config["OLLAMA_BASE_URL"].rstrip("/") + "/v1"
-    res = generate(
-        [{"role": "user", "content": prompt}],
-        tools=[],
-        model=CHUNK_RELEVANCE_MODEL,
-        base_url=ollama_base,
-    )
-    answer = (res.get("content") or "").strip().upper()
-    return 1 if answer.startswith("YES") else 0
+    cfg = get_eval_model_config()
+    try:
+        res = generate(
+            [{"role": "user", "content": prompt}],
+            tools=[],
+            model=cfg["chunk_model"],
+            base_url=cfg["chunk_base_url"],
+        )
+        answer = (res.get("content") or "").strip().upper()
+        return 1 if answer.startswith("YES") else 0
+    except Exception as err:
+        logger.warning(f"judge_chunk_relevance error: {err}")
+        return 0
 
 
 def context_precision(relevances):
@@ -101,34 +123,23 @@ Example output: ["Claim one.", "Claim two."]"""
 
 
 def extract_claims(expected):
-    """One judge-LLM call: decompose a golden `expected` answer into atomic
-    factual claims, so context_recall can check each one independently
-    against the retrieved context.
+    """Decompose a golden `expected` answer into atomic factual claims,
+    so context_recall can check each one independently against the retrieved context.
 
-    Unlike judge_chunk_relevance/judge_claim_support (simple YES/NO calls,
-    fine on the tiny local model), this uses the app's configured judge
-    model — decomposing a short phrase into non-overlapping atomic claims
-    without inventing extra ones needs more reasoning than `llama3.2:1b`
-    reliably gives: on short `expected` strings like a bare phone number it
-    would ignore the JSON-array instruction, echo the prompt's own example
-    text back as a "claim", or invent unstated facts (e.g. "the number is
-    from California"). Returns [] (not a hard failure) if the model still
-    doesn't reply with valid JSON; context_recall treats an empty claim list
-    as "nothing to score".
+    Uses the configured judge model. Robustly handles markdown fences and JSON parsing.
     """
     prompt = CLAIM_EXTRACTION_PROMPT.format(expected=expected)
-    res = generate([{"role": "user", "content": prompt}], tools=[])
-    raw = (res.get("content") or "").strip()
-    # The tiny model routinely wraps its answer in ```fences``` or adds a
-    # preamble/epilogue despite being told "no markdown fences" — pull out
-    # just the [...] array before parsing instead of failing on the wrapper.
-    match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if match:
-        raw = match.group(0)
+    cfg = get_eval_model_config()
     try:
+        res = generate([{"role": "user", "content": prompt}], tools=[], model=cfg["judge_model"])
+        raw = (res.get("content") or "").strip()
+        match = re.search(r"\[.*\]", raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
         claims = json.loads(raw)
         return claims if isinstance(claims, list) else []
-    except json.JSONDecodeError:
+    except Exception as err:
+        logger.warning(f"extract_claims error: {err}")
         return []
 
 
@@ -143,18 +154,23 @@ Answer (YES or NO only):"""
 
 
 def judge_claim_support(claim, context):
-    """One local-Ollama call: is this single golden-answer claim backed by the
-    retrieved context? Same YES/NO judge pattern as judge_chunk_relevance."""
+    """Is this single golden-answer claim backed by the retrieved context?
+    Same YES/NO judge pattern as judge_chunk_relevance.
+    """
     prompt = CLAIM_SUPPORT_PROMPT.format(claim=claim, context=(context or "")[:2000])
-    ollama_base = current_app.config["OLLAMA_BASE_URL"].rstrip("/") + "/v1"
-    res = generate(
-        [{"role": "user", "content": prompt}],
-        tools=[],
-        model=CHUNK_RELEVANCE_MODEL,
-        base_url=ollama_base,
-    )
-    answer = (res.get("content") or "").strip().upper()
-    return 1 if answer.startswith("YES") else 0
+    cfg = get_eval_model_config()
+    try:
+        res = generate(
+            [{"role": "user", "content": prompt}],
+            tools=[],
+            model=cfg["chunk_model"],
+            base_url=cfg["chunk_base_url"],
+        )
+        answer = (res.get("content") or "").strip().upper()
+        return 1 if answer.startswith("YES") else 0
+    except Exception as err:
+        logger.warning(f"judge_claim_support error: {err}")
+        return 0
 
 
 def context_recall(claims, context):
@@ -177,13 +193,6 @@ def context_recall(claims, context):
 # Judge prompt: scores Faithfulness / Answer Relevance / Answer Correctness
 # (the Generator-side half of the RAG metric split) against the retrieved
 # context and the golden expected outcome.
-# Note on answer_relevance:  NOT RAGAS's actual formula (generate n
-# candidate questions from the answer, embed them, then average the cosine
-# similarity against the original question). That needs an embedding model
-# and n+1 extra LLM calls per item. This is a cheaper LLM-as-judge stand-in:
-# one call, the judge reads the question/answer pair and scores directly.
-# Same thing it's meant to catch (off-topic answers, evasive non-answers,
-# padded preambles) but the score is a subjective judgment call.
 JUDGE_PROMPT = """You are grading one turn of a RAG support agent. Score three metrics from
 0.0 to 1.0 (one decimal place):
 
@@ -211,8 +220,6 @@ Reply with JSON only, no markdown fences:
 def run_pipeline(goal):
     """Reproduce routes.py's SEARCH_KNOWLEDGE path: retrieve, then generate
     the final answer from the same system prompt + context shape.
-
-
     """
     kb_result = search_knowledge(goal)
     kb_context = ""
@@ -238,12 +245,22 @@ def judge(question, context, answer, expected):
     """Ask the judge LLM to score faithfulness/relevance/correctness.
     """
     prompt = JUDGE_PROMPT.format(question=question, context=context, answer=answer, expected=expected)
-    res = generate([{"role": "user", "content": prompt}], tools=[])
-    raw = (res.get("content") or "").strip()
+    cfg = get_eval_model_config()
     try:
+        res = generate([{"role": "user", "content": prompt}], tools=[], model=cfg["judge_model"])
+        raw = (res.get("content") or "").strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
         return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"faithfulness": None, "answer_relevance": None, "answer_correctness": None, "reason": f"judge output not JSON: {raw[:200]}"}
+    except Exception as err:
+        logger.warning(f"judge error: {err}")
+        return {
+            "faithfulness": None,
+            "answer_relevance": None,
+            "answer_correctness": None,
+            "reason": f"judge error: {str(err)[:100]}",
+        }
 
 
 def main():
