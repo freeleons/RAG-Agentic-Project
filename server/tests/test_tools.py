@@ -39,7 +39,10 @@ def test_search_knowledge_parses_answer_and_sources(app, monkeypatch):
     monkeypatch.setitem(app.config, "ANYTHINGLLM_WORKSPACE", "apprentice-kb")
     payload = {
         "textResponse": "Nimbus Pro costs $8/mo.",
-        "sources": [{"title": "nimbus-faq.txt"}, {"url": "http://kb/doc2"}],
+        "sources": [
+            {"title": "nimbus-faq.txt", "score": 0.61, "text": "Nimbus Pro is $8/mo per seat."},
+            {"url": "http://kb/doc2", "score": 0.44, "text": "Nimbus Pro includes 10GB storage."},
+        ],
     }
     seen = {}
 
@@ -55,6 +58,10 @@ def test_search_knowledge_parses_answer_and_sources(app, monkeypatch):
     assert result == {
         "answer": "Nimbus Pro costs $8/mo.",
         "sources": ["nimbus-faq.txt", "http://kb/doc2"],
+        "chunks": [
+            {"title": "nimbus-faq.txt", "score": 0.61, "text": "Nimbus Pro is $8/mo per seat."},
+            {"title": "http://kb/doc2", "score": 0.44, "text": "Nimbus Pro includes 10GB storage."},
+        ],
     }
     assert seen["url"] == "http://localhost:3001/api/v1/workspace/apprentice-kb/chat"
     assert seen["auth"].startswith("Bearer ")

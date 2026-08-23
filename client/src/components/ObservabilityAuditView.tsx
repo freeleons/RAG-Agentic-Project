@@ -21,6 +21,12 @@ const getStatusBadge = (status: string) => {
   }
 };
 
+export const getStepLabel = (step: { kind?: string; tool_name?: string | null }) => {
+  if (step.kind === "llm_call") return "🤖 LLM Reasoning Call";
+  if (step.tool_name === "search_knowledge") return "🔍 Retrieval";
+  return "🛠️ Tool Execution";
+};
+
 export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ onClose }) => {
   const [runs, setRuns] = useState<any[]>([]);
   const [stats, setStats] = useState<any | null>(null);
@@ -259,8 +265,13 @@ export const ObservabilityAuditView: React.FC<ObservabilityAuditViewProps> = ({ 
                     {selectedRunDetails.steps?.map((step: any, idx: number) => (
                       <div key={idx} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 font-mono text-xs shadow-xs">
                         <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                          {/* search_knowledge steps are labeled as their own "Retrieval" span type
+                              (kind is still "tool_call" in the DB — this is a display-only distinction,
+                              mirroring the OTel GenAI convention that retrieval is its own span kind)
+                              instead of the generic "Tool Execution" label used for every other tool.
+                               */}
                           <span className="font-bold text-blue-700 dark:text-blue-400">
-                            Seq #{step.seq} — {step.kind === "llm_call" ? "🤖 LLM Reasoning Call" : "🛠️ Tool Execution"}
+                            Seq #{step.seq} — {getStepLabel(step)}
                           </span>
                           <span className="text-slate-500 dark:text-slate-400 font-bold">{step.latency_ms}ms</span>
                         </div>

@@ -105,12 +105,19 @@ def wait_for_retry(attempt: int, base: float = 2.0, max_retry_after: float = MAX
     return exp + jitter
 
 
-def _endpoint_and_headers():
+def _endpoint_and_headers(base_url=None, api_key=None):
     """Pick the chat-completions URL + auth headers from config.
 
     Hosted endpoint wins if configured; otherwise fall back to local Ollama
     (whose OpenAI-compatible API lives under /v1 and needs no auth).
+
+    `base_url`, when given, skips config entirely and talks to that host.
+    If `api_key` is provided (or configured AGENT_API_KEY matches), sets the Bearer auth header.
     """
+    if base_url:
+        key = api_key or (current_app.config.get("AGENT_API_KEY") if current_app.config.get("AGENT_API_BASE_URL") and current_app.config["AGENT_API_BASE_URL"].rstrip("/") in base_url else None)
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        return f"{base_url.rstrip('/')}/chat/completions", headers
     cfg = current_app.config
     if cfg.get("AGENT_API_BASE_URL"):
         base = cfg["AGENT_API_BASE_URL"].rstrip("/")
@@ -121,7 +128,7 @@ def _endpoint_and_headers():
     return f"{base}/chat/completions", headers
 
 
-def generate(messages, tools, max_retries=3, timeout=120):
+def generate(messages, tools, max_retries=3, timeout=120, model=None, base_url=None, api_key=None):
     """One model call. Returns {"type": "final", "content": str} or
     {"type": "tool_call", "name": str, "arguments": dict, "call_id": str}.
 
@@ -131,9 +138,13 @@ def generate(messages, tools, max_retries=3, timeout=120):
     `messages` is a standard OpenAI-style list of {"role", "content"} dicts;
     `tools` is the JSON tool schema from tools.openai_tool_defs() (or empty
     for plain chat). Raises LLMError only after all retries are exhausted.
+
+    `model`, `base_url`, and `api_key` are optional overrides for AGENT_MODEL /
+    AGENT_API_BASE_URL / AGENT_API_KEY — every production caller (agent.py, routes.py)
+    omits them and gets the configured model as before.
     """
-    url, headers = _endpoint_and_headers()
-    payload = {"model": current_app.config["AGENT_MODEL"], "messages": messages}
+    url, headers = _endpoint_and_headers(base_url, api_key)
+    payload = {"model": model or current_app.config["AGENT_MODEL"], "messages": messages}
     if tools:
         payload["tools"] = tools
 
