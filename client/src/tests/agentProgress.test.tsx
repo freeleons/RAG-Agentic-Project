@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveAgentProgress } from "../components/AgentProgress";
 import { TraceStep } from "../types";
+import { upsertTraceStep } from "../App";
 
 const llmToolCall = (seq: number, name: string, args: Record<string, unknown>): TraceStep => ({
   seq,
@@ -78,5 +79,33 @@ describe("deriveAgentProgress", () => {
     const done = deriveAgentProgress(steps, "completed");
     expect(done.percent).toBe(100);
     expect(done.stage).toBe("COMPLETED");
+  });
+});
+
+describe("upsertTraceStep", () => {
+  it("appends a new step and replaces by seq", () => {
+    const first = {
+      seq: 1,
+      kind: "llm_call",
+      tool_name: null,
+      arguments: null,
+      result: { type: "tool_call", name: "search_knowledge" },
+      latency_ms: 10,
+    };
+    const second = {
+      seq: 2,
+      kind: "tool_call",
+      tool_name: "search_knowledge",
+      arguments: { query: "fsa" },
+      result: { answer: "ok" },
+      latency_ms: 20,
+    };
+    let steps = upsertTraceStep([], first);
+    expect(steps).toHaveLength(1);
+    steps = upsertTraceStep(steps, second);
+    expect(steps.map((s) => s.seq)).toEqual([1, 2]);
+    steps = upsertTraceStep(steps, { ...first, latency_ms: 99 });
+    expect(steps[0].latency_ms).toBe(99);
+    expect(steps).toHaveLength(2);
   });
 });

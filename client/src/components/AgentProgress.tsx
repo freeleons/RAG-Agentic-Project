@@ -159,18 +159,35 @@ const STATUS_CLASS: Record<ToolActivity["status"], string> = {
 interface AgentProgressPanelProps {
   progress: AgentProgress;
   elapsedSeconds: number;
+  /** Live streamed TraceSteps — appended one-by-one as SSE `step` events arrive. */
+  steps?: TraceStep[];
 }
 
-/** Live progress bar + tool activity shown while Pip is working. */
+const stepLabel = (step: TraceStep): string => {
+  if (step.kind === "tool_call") return step.tool_name || "tool_call";
+  if (step.kind === "llm_call") {
+    const result = asRecord(step.result);
+    if (result.type === "tool_call" && typeof result.name === "string") {
+      return `llm → ${result.name}`;
+    }
+    if (result.type === "final") return "llm → final";
+    return "llm_call";
+  }
+  return step.kind;
+};
+
+/** Live progress bar + streaming step list shown while Pip is working. */
 export const AgentProgressPanel: React.FC<AgentProgressPanelProps> = ({
   progress,
   elapsedSeconds,
+  steps = [],
 }) => (
   <div className="p-2.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 space-y-2">
     <div className="flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">
       <span>{progress.stage.replace("_", " ")}</span>
       <span>
         {elapsedSeconds}s · {progress.percent}%
+        {steps.length > 0 ? ` · ${steps.length} step${steps.length === 1 ? "" : "s"}` : ""}
       </span>
     </div>
 
@@ -188,6 +205,28 @@ export const AgentProgressPanel: React.FC<AgentProgressPanelProps> = ({
     <div className="text-xs font-mono font-semibold text-blue-700 dark:text-blue-300 animate-pulse">
       {progress.label}
     </div>
+
+    {steps.length > 0 && (
+      <ol
+        data-testid="live-trace-steps"
+        className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar pt-1 border-t border-blue-200/70 dark:border-blue-800/70"
+      >
+        {steps.map((step) => (
+          <li
+            key={step.seq}
+            className="flex items-center gap-1.5 text-[10px] font-mono leading-tight text-slate-700 dark:text-slate-200"
+          >
+            <span className="text-slate-400 dark:text-slate-500 shrink-0">#{step.seq}</span>
+            <span className="font-bold shrink-0">{stepLabel(step)}</span>
+            {step.latency_ms != null && (
+              <span className="ml-auto text-slate-400 dark:text-slate-500 shrink-0">
+                {step.latency_ms}ms
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    )}
 
     {progress.tools.length > 0 && (
       <div className="space-y-1 max-h-24 overflow-y-auto custom-scrollbar pt-1 border-t border-blue-200/70 dark:border-blue-800/70">

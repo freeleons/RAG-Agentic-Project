@@ -30,6 +30,7 @@ from server.llm import generate, stamp_run_llm_identity
 from server.loop_guard import LoopGuard
 from server.models import Message, PendingAction, RunStep, db, utcnow
 from server.observability import record_step
+from server.streaming import emit
 from server.tools import openai_tool_defs, validate_arguments
 from server.utils import clean_draft_text, content_hash, is_client_disconnected
 
@@ -126,7 +127,25 @@ def _finish(run, status, answer):
     return {"run_id": run.id, "status": status, "answer": answer}
 
 
-def run_agent(run, goal):
+
+def _live_step_payload(run_id, seq):
+    """Serialize one persisted RunStep for SSE (no llm_messages — keep events light)."""
+    s = RunStep.query.filter_by(run_id=run_id, seq=seq).first()
+    if s is None:
+        return None
+    return {
+        "seq": s.seq,
+        "kind": s.kind,
+        "tool_name": s.tool_name,
+        "arguments": s.arguments,
+        "result": s.result,
+        "latency_ms": s.latency_ms,
+        "error_type": s.error_type,
+        "span_id": s.span_id,
+    }
+
+
+def run_agent(run, goal, on_event=None):
     """Run the bounded agent loop for a fresh user goal."""
     stamp_run_llm_identity(run)
     # Fingerprint the system prompt template this run is actually using, so
@@ -147,10 +166,10 @@ def run_agent(run, goal):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages += [{"role": m.role, "content": m.content} for m in history]
     messages.append({"role": "user", "content": goal})
-    return _loop(run, messages, retried=False)
+    return _loop(run, messages, retried=False, on_event=on_event)
 
 
-def _loop(run, messages, retried):
+def _loop(run, messages, retried, on_event=None):
     """The decide -> act -> observe loop shared by run_agent and resume_run.
 
     `retried` tracks the malformed-tool-call guardrail: False means the model
@@ -160,6 +179,21 @@ def _loop(run, messages, retried):
     max_steps = current_app.config["MAX_AGENT_STEPS"]
     # Fresh guard per loop: fingerprints do not carry across runs/resumes unless we reuse this instance
     loop_guard = LoopGuard(repeat_threshold=3)
+
+    def finish(status, answer):
+        outcome = _finish(run, status, answer)
+        emit(on_event, "outcome", **outcome)
+        return outcome
+
+    def stop_outcome():
+        outcome = {
+            "run_id": run.id,
+            "status": "stopped",
+            "answer": "Execution was stopped by the user."
+        }
+        emit(on_event, "outcome", **outcome)
+        return outcome
+
     while True:
         # --- Cancellation checks (two independent signals) -------------------
         # (a) The HTTP client vanished (browser tab closed / request aborted).
@@ -167,11 +201,7 @@ def _loop(run, messages, retried):
             current_app.logger.info(f"Run #{run.id} execution aborted by client disconnect.")
             run.status = "stopped"
             db.session.commit()
-            return {
-                "run_id": run.id,
-                "status": "stopped",
-                "answer": "Execution was stopped by the user."
-            }
+            return stop_outcome()
 
         # (b) The user hit the Stop button, which sets run.status='stopped'
         # via POST /runs/<id>/stop from ANOTHER request. refresh() re-reads
@@ -179,36 +209,45 @@ def _loop(run, messages, retried):
         db.session.refresh(run)
         if run.status == "stopped":
             current_app.logger.info(f"Run #{run.id} execution aborted by stopped status in DB.")
-            return {
-                "run_id": run.id,
-                "status": "stopped",
-                "answer": "Execution was stopped by the user."
-            }
+            return stop_outcome()
 
         # --- Guardrail: hard step cap ----------------------------------------
         if _next_seq(run) > max_steps:
-            return _finish(run, "failed", "I ran out of steps before finishing this task.")
+            return finish("failed", "I ran out of steps before finishing this task.")
 
         # --- Step 1: ask the model what to do next ---------------------------
         # record_step wraps the call so latency/tokens/prompt land in the trace.
         # (lambda default arg `m=messages` freezes the CURRENT list — `messages`
         # is rebound each iteration, and we want this step's snapshot.)
+        seq = _next_seq(run)
+        emit(on_event, "step_start", run_id=run.id, seq=seq, kind="llm_call")
         decision = record_step(
             run.id,
-            _next_seq(run),
+            seq,
             "llm_call",
             lambda m=messages: generate(m, openai_tool_defs()),
             llm_messages=messages,
         )
+        emit(
+            on_event,
+            "step",
+            run_id=run.id,
+            seq=seq,
+            kind="llm_call",
+            decision_type=decision.get("type"),
+            tool_name=decision.get("name"),
+            error=decision.get("error"),
+            step=_live_step_payload(run.id, seq),
+        )
         if "error" in decision:
             # generate() raised (all retries exhausted) and record_step caught it.
-            return _finish(
-                run, "failed", "The reasoning model is unavailable right now; please try again."
+            return finish(
+                "failed", "The reasoning model is unavailable right now; please try again."
             )
         if decision["type"] == "final":
             # Plain-text answer -> the run is complete.
             cleaned_text = clean_draft_text(decision["content"])
-            return _finish(run, "completed", cleaned_text or decision["content"])
+            return finish("completed", cleaned_text or decision["content"])
 
         # Otherwise the model requested a tool call.
         name = decision["name"]
@@ -220,8 +259,8 @@ def _loop(run, messages, retried):
         if problem is not None:
             if retried:
                 # Second malformed call in a row -> graceful failure.
-                return _finish(
-                    run, "failed", "I couldn't complete that: the tool call was malformed twice."
+                return finish(
+                    "failed", "I couldn't complete that: the tool call was malformed twice."
                 )
             retried = True
             # Feed the validation error back to the model as if it were a tool
@@ -242,7 +281,7 @@ def _loop(run, messages, retried):
         if loop_guard.check(name, arguments):
             # Still respect the hard step cap before recording the blocked observation
             if _next_seq(run) > max_steps:
-                return _finish(run, "failed", "I ran out of steps before finishing this task.")
+                return finish("failed", "I ran out of steps before finishing this task.")
             blocked = {
                 "success": False,
                 "error": (
@@ -251,13 +290,25 @@ def _loop(run, messages, retried):
                 ),
             }
             # Record a tool_call step for auditability without invoking the real handler
+            tool_seq = _next_seq(run)
+            emit(on_event, "step_start", run_id=run.id, seq=tool_seq, kind="tool_call", tool_name=name)
             record_step(
                 run.id,
-                _next_seq(run),
+                tool_seq,
                 "tool_call",
                 lambda: blocked,
                 tool_name=name,
                 arguments=arguments,
+            )
+            emit(
+                on_event,
+                "step",
+                run_id=run.id,
+                seq=tool_seq,
+                kind="tool_call",
+                tool_name=name,
+                blocked=True,
+                step=_live_step_payload(run.id, tool_seq),
             )
             messages = messages + [
                 _assistant_tool_call_message(call_id, name, arguments),
@@ -267,25 +318,39 @@ def _loop(run, messages, retried):
 
         # Cap check before tool execution / HITL pause
         if _next_seq(run) > max_steps:
-            return _finish(run, "failed", "I ran out of steps before finishing this task.")
+            return finish("failed", "I ran out of steps before finishing this task.")
 
         # Tool-execution HITL wrapper: tier 2+ pauses for Approve/Reject; tier 1 runs below
         if requires_hitl(name):
             outcome = execute_tool_with_hitl(name, arguments, run=run)
-            return {
+            payload = {
                 "run_id": run.id,
                 "status": "needs_confirmation",
                 "pending_action": outcome.pending_action,
             }
+            emit(on_event, "needs_confirmation", **payload)
+            return payload
 
         # --- Step 2: execute the tool ----------------------------------------
+        tool_seq = _next_seq(run)
+        emit(on_event, "step_start", run_id=run.id, seq=tool_seq, kind="tool_call", tool_name=name)
         result = record_step(
             run.id,
-            _next_seq(run),
+            tool_seq,
             "tool_call",
             lambda n=name, a=arguments: execute_tool(n, a),
             tool_name=name,
             arguments=arguments,
+        )
+        emit(
+            on_event,
+            "step",
+            run_id=run.id,
+            seq=tool_seq,
+            kind="tool_call",
+            tool_name=name,
+            error=result.get("error") if isinstance(result, dict) else None,
+            step=_live_step_payload(run.id, tool_seq),
         )
         # --- Step 3: observe — extend history and loop back to the model -----
         messages = messages + [
@@ -294,7 +359,7 @@ def _loop(run, messages, retried):
         ]
 
 
-def resume_run(run, approved):
+def resume_run(run, approved, on_event=None):
     """Resume a run paused in needs_confirmation. Caller guarantees that state.
 
     Reconstructs the conversation from the last llm_call step's stored prompt
@@ -322,13 +387,25 @@ def resume_run(run, approved):
 
     if approved:
         # Already approved — execute without re-entering the HITL gate
+        tool_seq = _next_seq(run)
+        emit(on_event, "step_start", run_id=run.id, seq=tool_seq, kind="tool_call", tool_name=action.tool_name)
         result = record_step(
             run.id,
-            _next_seq(run),
+            tool_seq,
             "tool_call",
             lambda a=action.arguments, n=action.tool_name: execute_tool(n, a),
             tool_name=action.tool_name,
             arguments=action.arguments,
+        )
+        emit(
+            on_event,
+            "step",
+            run_id=run.id,
+            seq=tool_seq,
+            kind="tool_call",
+            tool_name=action.tool_name,
+            error=result.get("error") if isinstance(result, dict) else None,
+            step=_live_step_payload(run.id, tool_seq),
         )
         messages.append(_tool_result_message(call_id, action.tool_name, result))
     else:
@@ -342,7 +419,7 @@ def resume_run(run, approved):
             )
         )
 
-    outcome = _loop(run, messages, retried=False)
+    outcome = _loop(run, messages, retried=False, on_event=on_event)
     # A rejected action that still ends cleanly is reported as 'declined'
     # rather than 'completed', so the UI can show the distinction.
     if not approved and outcome["status"] == "completed":

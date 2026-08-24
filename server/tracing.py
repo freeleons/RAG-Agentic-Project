@@ -16,28 +16,56 @@ Exporting is a config change, not a code change: with no
 OTEL_EXPORTER_OTLP_ENDPOINT set, spans still get real trace/span ids (stored
 on Run/RunStep for the Audit tab) but nothing leaves the process. Set that
 env var and spans also ship via OTLP/HTTP to Jaeger, Tempo, Langfuse, etc.
+
+If the optional `opentelemetry` packages are not installed, we fall back to
+lightweight no-op spans that still mint real hex span ids so the Audit tab
+and streaming path keep working.
 """
 
+from __future__ import annotations
+
 import os
+import secrets
 
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import NonRecordingSpan, SpanContext, Status, StatusCode, TraceFlags
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, Status, StatusCode, TraceFlags
 
-# Placeholder parent span id for the synthetic trace root. It is never
-# recorded or exported itself — it only exists so every step span has
-# *something* to parent onto, making them siblings under one shared
-# trace_id (a star, not a chain: simpler than threading each step's real
-# parent through record_step, and just as valid a trace).
+    _HAS_OTEL = True
+except ImportError:  # pragma: no cover - exercised when deps are missing locally
+    _HAS_OTEL = False
+
+
 _ROOT_SPAN_ID = 0x0000000000000001
-
 _provider = None
+
+
+class _NoopSpan:
+    """Stand-in span when OpenTelemetry isn't installed."""
+
+    def __init__(self):
+        self._span_id = secrets.randbits(64)
+
+    def set_attribute(self, key, value):
+        return None
+
+    def set_status(self, *args, **kwargs):
+        return None
+
+    def end(self):
+        return None
+
+    def get_span_context(self):
+        return type("Ctx", (), {"span_id": self._span_id})()
 
 
 def _tracer_provider():
     global _provider
+    if not _HAS_OTEL:
+        return None
     if _provider is not None:
         return _provider
     _provider = TracerProvider(
@@ -45,9 +73,6 @@ def _tracer_provider():
     )
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
     if endpoint:
-        # Local import: keeps the OTLP/HTTP + requests dependency chain out
-        # of the hot path for the (common, in dev) case where no endpoint
-        # is configured at all.
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
         _provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
@@ -70,11 +95,9 @@ def _parent_context(trace_id_hex):
 
 
 def start_step_span(trace_id_hex, name, attributes):
-    """Start one span for a RunStep, parented onto the run's shared trace_id.
-
-    Caller (observability.record_step) owns the span's lifetime: set any
-    outcome attributes, then call end_step_span().
-    """
+    """Start one span for a RunStep, parented onto the run's shared trace_id."""
+    if not _HAS_OTEL:
+        return _NoopSpan()
     tracer = trace.get_tracer("rag-agent", tracer_provider=_tracer_provider())
     span = tracer.start_span(name, context=_parent_context(trace_id_hex))
     for key, value in attributes.items():
@@ -86,7 +109,10 @@ def start_step_span(trace_id_hex, name, attributes):
 def end_step_span(span, *, error_type=None):
     if error_type:
         span.set_attribute("error.type", error_type)
-        span.set_status(Status(StatusCode.ERROR, error_type))
+        if _HAS_OTEL:
+            span.set_status(Status(StatusCode.ERROR, error_type))
+        else:
+            span.set_status(error_type)
     span.end()
 
 

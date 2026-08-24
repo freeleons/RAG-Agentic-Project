@@ -196,16 +196,25 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
           setRunSteps(data.steps || []);
         }
       } catch (err) {
-        // Ignore transient polling errors
+        // Ignore transient poll errors
       }
     }, 600);
 
     return () => clearInterval(pollInterval);
   }, [isBotThinking, activeRunId]);
 
+  // Ticket triage streams steps onto latestRun — mirror them into the live panel.
+  useEffect(() => {
+    if (!isProcessing) return;
+    if (latestRun?.run_id) setActiveRunId(latestRun.run_id);
+    if (latestRun?.steps) setRunSteps(latestRun.steps);
+  }, [isProcessing, latestRun?.run_id, latestRun?.steps]);
+
+  const showLiveProgress = isBotThinking || isProcessing;
+
   // Heartbeat so the panel keeps moving between persisted steps
   useEffect(() => {
-    if (!isBotThinking) return;
+    if (!showLiveProgress) return;
 
     const startedAt = Date.now();
     setElapsedSeconds(0);
@@ -214,7 +223,14 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
     }, 1000);
 
     return () => clearInterval(ticker);
-  }, [isBotThinking]);
+  }, [showLiveProgress, activeRunId]);
+
+  // Clear provisional steps when a new triage run begins empty
+  useEffect(() => {
+    if (isProcessing && latestRun?.status === "running" && (latestRun.steps?.length ?? 0) === 0) {
+      setRunSteps([]);
+    }
+  }, [isProcessing, latestRun?.run_id, latestRun?.status, latestRun?.steps?.length]);
 
   // Report thinking status up to parent
   useEffect(() => {
@@ -522,8 +538,8 @@ export const AICopilotWidget: React.FC<AICopilotWidgetProps> = ({
               );
             })}
 
-            {isBotThinking && (
-              <AgentProgressPanel progress={liveProgress} elapsedSeconds={elapsedSeconds} />
+            {showLiveProgress && (
+              <AgentProgressPanel progress={liveProgress} elapsedSeconds={elapsedSeconds} steps={runSteps} />
             )}
             <div ref={chatEndRef} />
           </div>

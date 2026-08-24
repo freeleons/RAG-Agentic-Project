@@ -32,6 +32,8 @@ from flask import Blueprint, current_app, g, jsonify, request, send_from_directo
 from sqlalchemy import func
 
 from server.agent import resume_run, run_agent
+from server.streaming import client_wants_sse, format_sse, sse_response
+from server.triage_outcome import apply_triage_outcome
 from server.auth import require_auth
 from server.hitl import execute_tool_with_hitl
 from server.llm import generate, llm_provider, stamp_run_llm_identity
@@ -795,6 +797,57 @@ def triage_ticket_endpoint(ticket_id):
     db.session.commit()
 
     # Step 2: the bounded agent loop does the real work.
+    # Optional SSE (?stream=1 or Accept: text/event-stream) streams step events
+    # live while the loop runs, then a final `done` event with the same payload
+    # the JSON response would have returned.
+    if client_wants_sse():
+        from queue import SimpleQueue
+        from threading import Thread
+
+        app = current_app._get_current_object()
+        run_id, ticket_id, conv_id, prompt = run.id, ticket.id, conv.id, user_prompt
+        event_q = SimpleQueue()
+
+        def _worker():
+            with app.app_context():
+                live_run = db.session.get(Run, run_id)
+                live_ticket = db.session.get(Ticket, ticket_id)
+
+                def on_event(evt):
+                    event_q.put(evt)
+
+                try:
+                    outcome = run_agent(live_run, prompt, on_event=on_event)
+                except Exception:
+                    current_app.logger.exception(
+                        "Agent triage failed for ticket %s (SSE)", ticket_id
+                    )
+                    outcome = {"status": "failed"}
+                payload, status = apply_triage_outcome(
+                    live_ticket,
+                    live_run,
+                    conv_id,
+                    outcome,
+                    _serialize_ticket,
+                )
+                event_q.put({"type": "done", "http_status": status, **payload})
+                event_q.put(None)
+
+        Thread(target=_worker, daemon=True).start()
+
+        def event_stream():
+            yield format_sse(
+                "run_started",
+                {"run_id": run_id, "conversation_id": conv_id},
+            )
+            while True:
+                item = event_q.get()
+                if item is None:
+                    break
+                yield format_sse(item.get("type", "event"), item)
+
+        return sse_response(event_stream())
+
     try:
         outcome = run_agent(run, user_prompt)
     except Exception:
@@ -802,78 +855,10 @@ def triage_ticket_endpoint(ticket_id):
         # and handled by the fallback below.
         outcome = {"status": "failed"}
 
-    db.session.refresh(run)
-    if run.status == "stopped" or outcome.get("status") == "stopped":
-        # User cancelled: put the ticket back to open. 499 is the (nginx)
-        # convention for "client closed request".
-        ticket.status = "open"
-        run.status = "stopped"
-        db.session.commit()
-        return jsonify({
-            "ticket": _serialize_ticket(ticket),
-            "run": {
-                "run_id": run.id,
-                "status": "stopped",
-                "answer": "Triage was stopped by the user."
-            },
-            "conversation_id": conv.id
-        }), 499
-
-    if outcome.get("status") == "failed":
-        # Graceful degradation: never leave the ticket with nothing. Store a
-        # generic holding reply (confidence 0 so the UI flags it).
-        current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
-
-        draft_text = (
-            f"Hello {ticket.requester_name.split()[0]},\n\n"
-            f"Thank you for contacting ApexCare Support regarding '{ticket.title}'.\n\n"
-            f"Our automated triage system is currently experiencing a delay, but your ticket has been securely logged. "
-            f"An HR representative will review your request and assist you shortly."
-        )
-
-        ticket.draft_reply = draft_text
-        ticket.draft_confidence = 0  # signals "fallback, needs human eyes"
-        ticket.status = "open"
-        run.status = "failed"
-        db.session.commit()
-
-        outcome = {
-            "run_id": run.id,
-            "status": "failed",
-            "answer": "Triage failed. Applied safe fallback draft.",
-        }
-
-    if outcome.get("status") == "completed" and ticket.status != "escalated":
-        raw_ans = outcome.get("answer") or ""
-        cleaned_ans = clean_draft_text(raw_ans)
-        if cleaned_ans:
-            ticket.draft_reply = cleaned_ans
-            if ticket.status == "open":
-                ticket.status = "draft_pending"
-            db.session.commit()
-    elif (outcome.get("status") == "needs_confirmation" or ticket.status == "escalated") and not ticket.draft_reply:
-        requester_first = (ticket.requester_name or "there").split()[0].strip()
-        dept_str = ticket.requester_department or "HR Support"
-        draft_text = (
-            f"Hi {requester_first},\n\n"
-            f"Thank you for contacting ApexCare Support regarding '{ticket.title}'. "
-            f"I have escalated your request to our {dept_str} specialist team for review.\n\n"
-            f"Our team will follow up directly with you shortly with next steps.\n\n"
-            f"Best regards,\n"
-            f"HR Support Team"
-        )
-        ticket.draft_reply = draft_text
-        if ticket.status == "open":
-            ticket.status = "draft_pending"
-        db.session.commit()
-
-    # Refresh ticket — the agent's tools may have changed it (draft, status).
-    db.session.refresh(ticket)
-    return jsonify({
-        "ticket": _serialize_ticket(ticket),
-        "run": outcome,
-        "conversation_id": conv.id
-    })
+    payload, status = apply_triage_outcome(
+        ticket, run, conv.id, outcome, _serialize_ticket
+    )
+    return jsonify(payload), status
 
 
 # --------------------------------------------------------------------------

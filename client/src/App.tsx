@@ -5,7 +5,7 @@ import {
   fetchTickets,
   getCurrentUser,
   reseedTickets,
-  triageTicket,
+  triageTicketStream,
   updateTicket,
 } from "./api";
 import { AuthPage } from "./auth/AuthPage";
@@ -17,7 +17,7 @@ import { ObservabilityAuditView } from "./components/ObservabilityAuditView";
 import { PipOnboardingModal } from "./components/PipOnboardingModal";
 import { TicketQueue } from "./components/TicketQueue";
 import { TicketWorkbench } from "./components/TicketWorkbench";
-import { AgentRun, Ticket, UserProfile } from "./types";
+import { AgentRun, Ticket, TraceStep, UserProfile } from "./types";
 
 export const mapBackendStepToText = (steps: Array<{ kind: string; tool_name?: string }>): string => {
   if (!steps || steps.length === 0) {
@@ -44,6 +44,39 @@ export const mapBackendStepToText = (steps: Array<{ kind: string; tool_name?: st
   }
 
   return "⚡ Processing agent workflow...";
+};
+
+/** Upsert a streamed TraceStep by seq so the live panel grows as events arrive. */
+export const upsertTraceStep = (steps: TraceStep[], step: TraceStep): TraceStep[] => {
+  const idx = steps.findIndex((s) => s.seq === step.seq);
+  if (idx >= 0) {
+    const next = steps.slice();
+    next[idx] = { ...next[idx], ...step };
+    return next;
+  }
+  return [...steps, step].sort((a, b) => a.seq - b.seq);
+};
+
+const provisionalStepFromEvent = (data: Record<string, unknown>): TraceStep | null => {
+  const seq = Number(data.seq);
+  if (!Number.isFinite(seq) || seq < 1) return null;
+  return {
+    seq,
+    kind: String(data.kind || "llm_call"),
+    tool_name: data.tool_name ? String(data.tool_name) : null,
+    arguments: null,
+    result: null,
+    latency_ms: null,
+  };
+};
+
+const completedStepFromEvent = (data: Record<string, unknown>): TraceStep | null => {
+  const raw = data.step;
+  if (raw && typeof raw === "object") {
+    const step = raw as TraceStep;
+    if (typeof step.seq === "number") return step;
+  }
+  return provisionalStepFromEvent(data);
 };
 
 
@@ -238,35 +271,68 @@ export default function App() {
     const controller = new AbortController();
     triageAbortControllersRef.current[ticket.id] = controller;
 
-    // Fetch the latest run after a tiny delay so /triage has started and committed the run.
-    setTimeout(async () => {
-      try {
-        const token = localStorage.getItem("apexcare_token");
-        const res = await fetch("/api/runs?page=1&per_page=1", {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.runs && data.runs.length > 0) {
-            const latest = data.runs[0];
-            if (latest.status === "running") {
-              setTriagingTickets((prev) => {
-                if (!prev[ticket.id]) return prev;
-                return {
-                  ...prev,
-                  [ticket.id]: { ...prev[ticket.id], runId: latest.id },
-                };
-              });
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch active run ID early for triage:", err);
-      }
-    }, 200);
-
     try {
-      const res = await triageTicket(ticket.id, { signal: controller.signal });
+      const res = await triageTicketStream(ticket.id, {
+        signal: controller.signal,
+        onEvent: (event, data) => {
+          if (event === "run_started" && data.run_id) {
+            const runId = Number(data.run_id);
+            setLatestRun({
+              run_id: runId,
+              status: "running",
+              steps: [],
+            });
+            setTriagingTickets((prev) => {
+              if (!prev[ticket.id]) return prev;
+              return {
+                ...prev,
+                [ticket.id]: {
+                  ...prev[ticket.id],
+                  runId,
+                  statusText: "🧠 Analyzing query intent...",
+                },
+              };
+            });
+            return;
+          }
+          if (event === "step_start" || event === "step") {
+            const kind = String(data.kind || "");
+            const toolName = data.tool_name ? String(data.tool_name) : undefined;
+            const liveText = mapBackendStepToText([
+              { kind, tool_name: toolName },
+            ]);
+            // Append to the live trace panel only on completed `step` events
+            // (full payload). `step_start` updates status text only.
+            if (event === "step") {
+              const incoming = completedStepFromEvent(data);
+              if (incoming) {
+                setLatestRun((prev) => {
+                  const runId = data.run_id ? Number(data.run_id) : prev?.run_id;
+                  if (!runId) return prev;
+                  return {
+                    run_id: runId,
+                    status: prev?.status || "running",
+                    answer: prev?.answer,
+                    pending_action: prev?.pending_action,
+                    steps: upsertTraceStep(prev?.steps || [], incoming),
+                  };
+                });
+              }
+            }
+            setTriagingTickets((prev) => {
+              if (!prev[ticket.id]) return prev;
+              return {
+                ...prev,
+                [ticket.id]: {
+                  ...prev[ticket.id],
+                  runId: data.run_id ? Number(data.run_id) : prev[ticket.id].runId,
+                  statusText: liveText,
+                },
+              };
+            });
+          }
+        },
+      });
       let runObj = res.run;
 
       if (!runObj?.steps || runObj.steps.length === 0) {

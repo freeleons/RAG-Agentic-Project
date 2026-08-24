@@ -163,6 +163,79 @@ export async function triageTicket(ticketId: number, options?: RequestInit): Pro
   });
 }
 
+/** Live SSE triage: step events while the agent loop runs, then a final `done` payload. */
+export async function triageTicketStream(
+  ticketId: number,
+  handlers: {
+    onEvent?: (event: string, data: Record<string, unknown>) => void;
+    signal?: AbortSignal;
+  } = {}
+): Promise<{ ticket: Ticket; run: AgentRun; conversation_id: number }> {
+  const activeToken = token || localStorage.getItem("apexcare_token");
+  const headers: Record<string, string> = {
+    Accept: "text/event-stream",
+  };
+  if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
+
+  const resp = await fetch(`/api/tickets/${ticketId}/triage?stream=1`, {
+    method: "POST",
+    headers,
+    signal: handlers.signal,
+  });
+  if (!resp.ok || !resp.body) {
+    if (resp.status === 401 && onUnauthorized) onUnauthorized();
+    throw new ApiError(resp.status, `Triage stream failed (${resp.status})`);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: { ticket: Ticket; run: AgentRun; conversation_id: number } | null = null;
+
+  const flushEvent = (raw: string) => {
+    const lines = raw.split("\n");
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (!dataLines.length) return;
+    let data: Record<string, unknown> = {};
+    try {
+      data = JSON.parse(dataLines.join("\n"));
+    } catch {
+      data = { raw: dataLines.join("\n") };
+    }
+    handlers.onEvent?.(eventName, data);
+    if (eventName === "done" && data.ticket) {
+      donePayload = {
+        ticket: data.ticket as Ticket,
+        run: (data.run as AgentRun) || (data as unknown as AgentRun),
+        conversation_id: data.conversation_id as number,
+      };
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let splitAt: number;
+    while ((splitAt = buffer.indexOf("\n\n")) >= 0) {
+      const chunk = buffer.slice(0, splitAt);
+      buffer = buffer.slice(splitAt + 2);
+      if (chunk.trim()) flushEvent(chunk);
+    }
+  }
+  if (buffer.trim()) flushEvent(buffer);
+
+  if (!donePayload) {
+    throw new ApiError(500, "Triage stream ended without a done event");
+  }
+  return donePayload;
+}
+
 export async function approvePendingAction(runId: number): Promise<AgentRun> {
   return apiFetch<AgentRun>(`/api/runs/${runId}/approve`, {
     method: "POST",
