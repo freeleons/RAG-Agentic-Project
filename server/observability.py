@@ -11,6 +11,7 @@ feat/otel-tracing: that same one-span-per-call model is now also a real OTel
 span sharing the Run's W3C trace_id (see tracing.py) — RunStep stays the
 source of truth for the Audit tab; the span is the same data shaped for any
 OTel-speaking backend.
+# Security：Observability choke point — every LLM/tool call is timed, hashed, and spanned.
 
 """
 
@@ -23,6 +24,7 @@ from server.utils import content_hash
 
 
 def _span_name_and_attributes(kind, run, tool_name):
+    # Security: OTel GenAI attributes (operation, provider, model, tool name).
     if kind == "llm_call":
         return f"chat {run.model or ''}".strip(), {
             "gen_ai.operation.name": "chat",
@@ -45,6 +47,7 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
     """
     run = db.session.get(Run, run_id)
     span_name, span_attrs = _span_name_and_attributes(kind, run, tool_name)
+    #  Start a real OTel span under this run's shared W3C trace_id.
     span = start_step_span(run.trace_id, span_name, span_attrs)
 
     start = time.perf_counter()
@@ -53,6 +56,7 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
         result = fn()
     except Exception as exc:  # noqa: BLE001 — every failure must reach the log
         result = {"error": str(exc)}
+        # Security：Classify Timeout / ConnectionError for audit (error.type).
         error_type = classify_error_type(exc)
     latency_ms = int((time.perf_counter() - start) * 1000)
     # generate() piggybacks token usage on its result; pull it out so it lands
@@ -72,6 +76,7 @@ def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_me
     # Audit fingerprints, computed from exactly what gets stored in the
     # plaintext columns below (post usage-extraction) so a later re-hash of
     # `arguments`/`result` always matches.
+    # Security： Integrity hashes of args/result + OTel span_id on the RunStep row.
     step = RunStep(
         run_id=run_id,
         seq=seq,

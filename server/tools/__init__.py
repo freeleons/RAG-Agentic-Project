@@ -102,6 +102,9 @@ def validate_arguments(tool_name, arguments):
     This is the tool-argument guardrail: the agent loop calls it before every
     tool execution, and a non-None result triggers the one-retry-then-fail
     flow instead of crashing into the handler with bad inputs.
+
+    # Security EN: Schema validation — required keys, types, enums; reject unknown keys.
+    # 安全 中文：Schema 校验 — 必填键、类型、枚举；拒绝未知参数。
     """
     tool = TOOLS.get(tool_name)
     if tool is None:

@@ -1,0 +1,48 @@
+# --- Secrets / config ---
+.env
+.env.local
+*.env
+!.env.example
+
+# --- Python / Flask ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+instance/
+
+# --- Node / React ---
+node_modules/
+dist/
+build/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Database / data ---
+*.sqlite
+*.sqlite3
+*.db
+pgdata/
+
+# --- Uploads & model artifacts (never commit user docs or model files) ---
+uploads/
+data/
+*.gguf
+*.bin
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+notes/
+
+# Superpowers scratch workspaces (ledgers, briefs, mockups)
+.superpowers/

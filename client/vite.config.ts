@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     // 127.0.0.1, not localhost: macOS AirPlay Receiver also listens on
     // port 5000 and answers localhost with 403 before Flask can.
-    proxy: { "/api": "http://127.0.0.1:5000" },
+    proxy: { "/api": "http://127.0.0.1:5002" },
   },
   test: {
     environment: "jsdom",

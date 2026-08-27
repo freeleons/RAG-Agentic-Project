@@ -32,8 +32,6 @@ from flask import Blueprint, current_app, g, jsonify, request, send_from_directo
 from sqlalchemy import func
 
 from server.agent import resume_run, run_agent
-from server.streaming import client_wants_sse, format_sse, sse_response
-from server.triage_outcome import apply_triage_outcome
 from server.auth import require_auth
 from server.hitl import execute_tool_with_hitl
 from server.llm import generate, llm_provider, stamp_run_llm_identity
@@ -78,8 +76,6 @@ def _serialize_steps(run, include_messages=False):
             "latency_ms": s.latency_ms,
             "error_type": s.error_type,
             "span_id": s.span_id,
-            "arguments_hash": s.arguments_hash,
-            "result_hash": s.result_hash,
         }
         if include_messages:
             item["llm_messages"] = s.llm_messages
@@ -95,8 +91,6 @@ def _serialize_run(run):
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "trace_id": run.trace_id,
-        "system_prompt_hash": run.system_prompt_hash,
-        "final_output_hash": run.final_output_hash,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -104,7 +98,9 @@ def _serialize_run(run):
 def _owned_run(run_id):
     """Fetch a run only if it belongs to the current user (via its
     conversation). Returns None otherwise — the ownership check for
-    non-admin access."""
+    non-admin access.
+    # Security: Per-user isolation — non-admins cannot open another user's run.
+    """
     return (
         Run.query.join(Conversation, Run.conversation_id == Conversation.id)
         .filter(Run.id == run_id, Conversation.user_id == g.user.id)
@@ -123,7 +119,6 @@ def _parse_iso_date(value):
 
 def _filtered_runs_query():
     """(Run, Conversation, User) rows with audit filters applied, scoped by role.
-
     Shared by /runs and /runs/stats so both read identical query-string
     filters: user_email (admin only), status, conversation_id, date_from/to.
     Non-admins are always restricted to their own runs.
@@ -315,7 +310,6 @@ def list_guardrail_events():
     """Paginated guardrail-rejection log (newest first) — the read side of
     GuardrailEvent. Non-admins see only their own rejections; admins see
     everyone's, same role split as list_runs/_filtered_runs_query.
-   
     """
     q = db.session.query(GuardrailEvent, User).join(User, GuardrailEvent.user_id == User.id)
     if not g.is_admin:
@@ -338,7 +332,7 @@ def list_guardrail_events():
             "score": event.score,
             "action": event.action,
             "input_hash": event.input_hash,
-            "created_at": event.created_at.isoformat() if event.created_at else None,
+            "created_at": event.created_at.isoformat(),
         }
         if g.is_admin:
             item["user_email"] = user.email
@@ -362,9 +356,7 @@ def get_run(run_id):
         "provider": run.provider,
         "total_latency_ms": run.total_latency_ms,
         "trace_id": run.trace_id,
-        "system_prompt_hash": run.system_prompt_hash,
-        "final_output_hash": run.final_output_hash,
-        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "created_at": run.created_at.isoformat(),
         "steps": _serialize_steps(run, include_messages=True),
     }
     # Surface a pending confirmation so the UI can render approve/reject buttons.
@@ -593,6 +585,7 @@ def get_tickets():
     """The user's tickets, optionally filtered by ?status= and ?category=."""
     status = request.args.get("status")
     category = request.args.get("category")
+    # Security EN: Ticket list scoped to the current user only.
     q = Ticket.query.filter_by(user_id=g.user.id)
     if status:
         q = q.filter_by(status=status)
@@ -738,7 +731,7 @@ def triage_ticket_endpoint(ticket_id):
         return jsonify({"error": "ticket not found"}), 404
 
     # Layer-1 input sanitization: reject obvious injection probes in ticket text
-    # before any LLM call or status mutation.
+    # before any LLM call or status mutation. Entry-point filter on triage ticket title/description before LLM.
     blocked = reject_if_injection(
         ticket.title or "",
         ticket.description or "",
@@ -797,57 +790,6 @@ def triage_ticket_endpoint(ticket_id):
     db.session.commit()
 
     # Step 2: the bounded agent loop does the real work.
-    # Optional SSE (?stream=1 or Accept: text/event-stream) streams step events
-    # live while the loop runs, then a final `done` event with the same payload
-    # the JSON response would have returned.
-    if client_wants_sse():
-        from queue import SimpleQueue
-        from threading import Thread
-
-        app = current_app._get_current_object()
-        run_id, ticket_id, conv_id, prompt = run.id, ticket.id, conv.id, user_prompt
-        event_q = SimpleQueue()
-
-        def _worker():
-            with app.app_context():
-                live_run = db.session.get(Run, run_id)
-                live_ticket = db.session.get(Ticket, ticket_id)
-
-                def on_event(evt):
-                    event_q.put(evt)
-
-                try:
-                    outcome = run_agent(live_run, prompt, on_event=on_event)
-                except Exception:
-                    current_app.logger.exception(
-                        "Agent triage failed for ticket %s (SSE)", ticket_id
-                    )
-                    outcome = {"status": "failed"}
-                payload, status = apply_triage_outcome(
-                    live_ticket,
-                    live_run,
-                    conv_id,
-                    outcome,
-                    _serialize_ticket,
-                )
-                event_q.put({"type": "done", "http_status": status, **payload})
-                event_q.put(None)
-
-        Thread(target=_worker, daemon=True).start()
-
-        def event_stream():
-            yield format_sse(
-                "run_started",
-                {"run_id": run_id, "conversation_id": conv_id},
-            )
-            while True:
-                item = event_q.get()
-                if item is None:
-                    break
-                yield format_sse(item.get("type", "event"), item)
-
-        return sse_response(event_stream())
-
     try:
         outcome = run_agent(run, user_prompt)
     except Exception:
@@ -855,10 +797,78 @@ def triage_ticket_endpoint(ticket_id):
         # and handled by the fallback below.
         outcome = {"status": "failed"}
 
-    payload, status = apply_triage_outcome(
-        ticket, run, conv.id, outcome, _serialize_ticket
-    )
-    return jsonify(payload), status
+    db.session.refresh(run)
+    if run.status == "stopped" or outcome.get("status") == "stopped":
+        # User cancelled: put the ticket back to open. 499 is the (nginx)
+        # convention for "client closed request".
+        ticket.status = "open"
+        run.status = "stopped"
+        db.session.commit()
+        return jsonify({
+            "ticket": _serialize_ticket(ticket),
+            "run": {
+                "run_id": run.id,
+                "status": "stopped",
+                "answer": "Triage was stopped by the user."
+            },
+            "conversation_id": conv.id
+        }), 499
+
+    if outcome.get("status") == "failed":
+        # Graceful degradation: never leave the ticket with nothing. Store a
+        # generic holding reply (confidence 0 so the UI flags it).
+        current_app.logger.error(f"Agent triage failed for ticket {ticket.id}")
+
+        draft_text = (
+            f"Hello {ticket.requester_name.split()[0]},\n\n"
+            f"Thank you for contacting ApexCare Support regarding '{ticket.title}'.\n\n"
+            f"Our automated triage system is currently experiencing a delay, but your ticket has been securely logged. "
+            f"An HR representative will review your request and assist you shortly."
+        )
+
+        ticket.draft_reply = draft_text
+        ticket.draft_confidence = 0  # signals "fallback, needs human eyes"
+        ticket.status = "open"
+        run.status = "failed"
+        db.session.commit()
+
+        outcome = {
+            "run_id": run.id,
+            "status": "failed",
+            "answer": "Triage failed. Applied safe fallback draft.",
+        }
+
+    if outcome.get("status") == "completed" and ticket.status != "escalated":
+        raw_ans = outcome.get("answer") or ""
+        cleaned_ans = clean_draft_text(raw_ans)
+        if cleaned_ans:
+            ticket.draft_reply = cleaned_ans
+            if ticket.status == "open":
+                ticket.status = "draft_pending"
+            db.session.commit()
+    elif (outcome.get("status") == "needs_confirmation" or ticket.status == "escalated") and not ticket.draft_reply:
+        requester_first = (ticket.requester_name or "there").split()[0].strip()
+        dept_str = ticket.requester_department or "HR Support"
+        draft_text = (
+            f"Hi {requester_first},\n\n"
+            f"Thank you for contacting ApexCare Support regarding '{ticket.title}'. "
+            f"I have escalated your request to our {dept_str} specialist team for review.\n\n"
+            f"Our team will follow up directly with you shortly with next steps.\n\n"
+            f"Best regards,\n"
+            f"HR Support Team"
+        )
+        ticket.draft_reply = draft_text
+        if ticket.status == "open":
+            ticket.status = "draft_pending"
+        db.session.commit()
+
+    # Refresh ticket — the agent's tools may have changed it (draft, status).
+    db.session.refresh(ticket)
+    return jsonify({
+        "ticket": _serialize_ticket(ticket),
+        "run": outcome,
+        "conversation_id": conv.id
+    })
 
 
 # --------------------------------------------------------------------------
@@ -975,6 +985,8 @@ def pip_chat():
         return jsonify({"error": "message is required"}), 400
 
     # Layer-1 input sanitization: reject obvious injection probes before any LLM call.
+    # Entry-point filter on Pip chat messages before any LLM call.
+
     blocked = reject_if_injection(message_text, source="chat")
     if blocked is not None:
         return blocked
@@ -1040,8 +1052,7 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "explicit_draft_flag", "route": "DRAFT"},
-            result_hash=content_hash({"status": "explicit_draft_flag", "route": "DRAFT"}),
+            result={"status": "explicit_draft_flag", "route": "DRAFT"}
         )
         db.session.add(step1)
         db.session.commit()
@@ -1051,8 +1062,7 @@ def pip_chat():
             run_id=run.id,
             seq=1,
             kind="llm_call",
-            result={"status": "classifying"},
-            result_hash=content_hash({"status": "classifying"}),
+            result={"status": "classifying"}
         )
         db.session.add(step1)
         db.session.commit()
@@ -1086,7 +1096,6 @@ def pip_chat():
             route_flag = "SEARCH_KNOWLEDGE"
 
         step1.result = {"status": "classified", "route": route_flag}
-        step1.result_hash = content_hash(step1.result)
         db.session.commit()
 
     # Step 1: Knowledge Search (always executed for SEARCH_KNOWLEDGE and DRAFT)
@@ -1094,16 +1103,13 @@ def pip_chat():
     kb_result = None
     no_policy_match = False
     if route_flag in ("SEARCH_KNOWLEDGE", "DRAFT"):
-        step2_args = {"query": message_text}
         step2 = RunStep(
             run_id=run.id,
             seq=2,
             kind="tool_call",
             tool_name="search_knowledge",
-            arguments=step2_args,
-            arguments_hash=content_hash(step2_args),
-            result={"status": "searching"},
-            result_hash=content_hash({"status": "searching"}),
+            arguments={"query": message_text},
+            result={"status": "searching"}
         )
         db.session.add(step2)
         db.session.commit()
@@ -1115,38 +1121,24 @@ def pip_chat():
                 if "NO_POLICY_MATCH" in str(kb_result.get("answer", "")):
                     no_policy_match = True
             step2.result = kb_result
-            step2.result_hash = content_hash(kb_result)
             step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
         except Exception as e:
             step2.result = {"error": str(e)}
-            step2.result_hash = content_hash(step2.result)
             step2.latency_ms = int((time.perf_counter() - search_start) * 1000)
             db.session.commit()
-
-    # Prior turns in this conversation, so follow-ups ("and how does it roll
-    # over?") resolve against what was already said instead of starting cold
-    # each request. Capped so the prompt doesn't grow unbounded over a long chat.
-    history_messages = [
-        {"role": m.role, "content": m.content}
-        for m in Message.query.filter(
-            Message.conversation_id == conv.id, Message.id != msg.id
-        ).order_by(Message.id.desc()).limit(20).all()[::-1]
-    ]
 
     # Step 2: Select the dedicated system prompt based on route_flag
     if route_flag == "GENERAL":
         system_prompt = PIP_GENERAL_SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system_prompt},
-            *history_messages,
             {"role": "user", "content": message_text}
         ]
     elif route_flag == "DRAFT":
         system_prompt = PIP_DRAFT_SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system_prompt + tickets_context + kb_context},
-            *history_messages,
             {"role": "user", "content": message_text}
         ]
     else:  # SEARCH_KNOWLEDGE
@@ -1157,16 +1149,13 @@ def pip_chat():
         t_ctx = tickets_context if include_tickets else ""
         messages = [
             {"role": "system", "content": system_prompt + t_ctx + kb_context},
-            *history_messages,
             {"role": "user", "content": message_text}
         ]
 
     # Fingerprint the static template (not the per-request tickets_context/
     # kb_context, which vary by design every call) so drift in the wording we
     # actually wrote is detectable independent of the dynamic content around it.
-    # 中文：只对静态模板部分打指纹（不包括 tickets_context/kb_context——这两个
-    # 本来每次请求就该不一样），这样我们自己写的措辞有没有被改动，能独立于
-    # 周围动态内容被检测出来。
+    # Security EN: Integrity hash of the static system prompt (detect prompt drift).
     run.system_prompt_hash = content_hash(system_prompt)
     db.session.commit()
 
@@ -1189,8 +1178,7 @@ def pip_chat():
         seq=3,
         kind="llm_call",
         llm_messages=messages,
-        result={"status": "formulating"},
-        result_hash=content_hash({"status": "formulating"}),
+        result={"status": "formulating"}
     )
     db.session.add(step3)
     db.session.commit()
@@ -1277,12 +1265,10 @@ def pip_chat():
                 db.session.commit()
 
         step3.result = {"content": content}
-        step3.result_hash = content_hash(step3.result)
         run.status = "completed"
         # Audit fingerprint of what the user was actually shown.
+        # Integrity hash of the final answer the user saw.
         run.final_output_hash = content_hash(content)
-        # Persist the reply so the next turn's history_messages query picks it up.
-        db.session.add(Message(conversation_id=conv.id, role="assistant", content=content))
         _stamp_total_latency(run)
         db.session.commit()
 

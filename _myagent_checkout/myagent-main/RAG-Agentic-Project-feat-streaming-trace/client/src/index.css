@@ -1,0 +1,194 @@
+/* ApexCare Support Portal Design System */
+
+:root {
+  --bg-primary: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-card-hover: #F1F5F9;
+  --border-color: #E2E8F0;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --accent-blue: #2563EB;
+  --accent-cyan: #0891B2;
+  --accent-emerald: #059669;
+  --accent-amber: #D97706;
+  --accent-rose: #E11D48;
+}
+
+.dark {
+  --bg-primary: #0B0F17;
+  --bg-surface: #0F172A;
+  --bg-card: #1E293B;
+  --bg-card-hover: #334155;
+  --border-color: #334155;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --accent-blue: #3B82F6;
+  --accent-cyan: #06B6D4;
+  --accent-emerald: #10B981;
+  --accent-amber: #F59E0B;
+  --accent-rose: #F43F5E;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Custom Glassmorphism & Cards */
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+
+.glass-header {
+  background: var(--bg-surface);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Priority Badges (WCAG AA Compliant: >= 4.5:1 Contrast Ratio) */
+.badge-urgent {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #B91C1C;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.dark .badge-urgent {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+}
+
+.badge-high {
+  background-color: rgba(245, 158, 11, 0.12);
+  color: #B45309;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.dark .badge-high {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #FBBF24;
+}
+
+.badge-medium {
+  background-color: rgba(37, 99, 235, 0.12);
+  color: #1D4ED8;
+  border: 1px solid rgba(37, 99, 235, 0.3);
+}
+
+.dark .badge-medium {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #60A5FA;
+}
+
+.badge-low {
+  background-color: rgba(71, 85, 105, 0.12);
+  color: #334155;
+  border: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.dark .badge-low {
+  background-color: rgba(100, 116, 139, 0.15);
+  color: #94A3B8;
+}
+
+/* Status Badges */
+.status-open {
+  background-color: rgba(37, 99, 235, 0.12);
+  color: #1D4ED8;
+}
+
+.dark .status-open {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #60A5FA;
+}
+
+.status-in_triage {
+  background-color: rgba(126, 34, 206, 0.12);
+  color: #7E22CE;
+}
+
+.dark .status-in_triage {
+  background-color: rgba(147, 51, 234, 0.15);
+  color: #C084FC;
+}
+
+.status-draft_pending {
+  background-color: rgba(217, 119, 6, 0.12);
+  color: #B45309;
+}
+
+.dark .status-draft_pending {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #FBBF24;
+}
+
+.status-escalated {
+  background-color: rgba(220, 38, 38, 0.12);
+  color: #B91C1C;
+}
+
+.dark .status-escalated {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+}
+
+.status-resolved {
+  background-color: rgba(4, 120, 87, 0.12);
+  color: #047857;
+}
+
+.dark .status-resolved {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34D399;
+}
+
+.pulse-glow {
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.35);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.15s ease-out forwards;
+}

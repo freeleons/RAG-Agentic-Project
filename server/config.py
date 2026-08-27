@@ -40,9 +40,9 @@ class Config:
     AGENT_API_KEY = os.environ.get("AGENT_API_KEY", "")
 
     # --- Agent guardrails ----------------------------------------------------
-    # Hard cap on loop iterations per run (LLM calls + tool calls combined).
+    # Security: Hard cap on loop iterations (LLM + tool calls combined).
     MAX_AGENT_STEPS = int(os.environ.get("MAX_AGENT_STEPS", "6"))
-    # HTTP timeout for outbound tool calls (e.g. AnythingLLM requests).
+    # Security: HTTP timeout for outbound tool calls (e.g. AnythingLLM).
     TOOL_TIMEOUT_SECONDS = int(os.environ.get("TOOL_TIMEOUT_SECONDS", "180"))
     JWT_EXPIRY_HOURS = 24
 

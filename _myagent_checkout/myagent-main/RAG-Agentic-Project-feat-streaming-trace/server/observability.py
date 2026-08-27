@@ -1,0 +1,93 @@
+"""Observability: the one choke point through which every LLM call and tool
+call is executed AND logged. The agent loop never calls generate() or a tool
+handler directly — it always goes through record_step(), which guarantees the
+trace in the run_steps table is complete.
+
+feat/obs-provider-error-type: one RunStep per LLM/tool call (one inference
+span). Run.id is the trace; RunStep.seq is span order. We store
+gen_ai.provider.name on Run and error.type on failed steps.
+
+feat/otel-tracing: that same one-span-per-call model is now also a real OTel
+span sharing the Run's W3C trace_id (see tracing.py) — RunStep stays the
+source of truth for the Audit tab; the span is the same data shaped for any
+OTel-speaking backend.
+
+"""
+
+import time
+
+from server.llm import classify_error_type
+from server.models import Run, RunStep, db
+from server.tracing import end_step_span, span_id_hex, start_step_span
+from server.utils import content_hash
+
+
+def _span_name_and_attributes(kind, run, tool_name):
+    if kind == "llm_call":
+        return f"chat {run.model or ''}".strip(), {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": run.provider,
+            "gen_ai.request.model": run.model,
+        }
+    if kind == "tool_call":
+        return f"execute_tool {tool_name}", {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": tool_name,
+        }
+    return kind, {}
+
+
+def record_step(run_id, seq, kind, fn, *, tool_name=None, arguments=None, llm_messages=None):
+    """Execute fn(), timing it, and persist the outcome as a RunStep.
+
+    Never raises: an exception from fn() is captured as {"error": ...} so the
+    agent loop can degrade gracefully while the failure stays in the log.
+    """
+    run = db.session.get(Run, run_id)
+    span_name, span_attrs = _span_name_and_attributes(kind, run, tool_name)
+    span = start_step_span(run.trace_id, span_name, span_attrs)
+
+    start = time.perf_counter()
+    error_type = None
+    try:
+        result = fn()
+    except Exception as exc:  # noqa: BLE001 — every failure must reach the log
+        result = {"error": str(exc)}
+        error_type = classify_error_type(exc)
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    # generate() piggybacks token usage on its result; pull it out so it lands
+    # in dedicated columns instead of being duplicated inside `result`.
+    usage = {}
+    if isinstance(result, dict) and "usage" in result:
+        usage = result.pop("usage") or {}
+    # The result column is JSON; wrap non-dict values so storage is uniform.
+    stored = result if isinstance(result, dict) else {"value": result}
+
+    if usage.get("prompt_tokens") is not None:
+        span.set_attribute("gen_ai.usage.input_tokens", usage["prompt_tokens"])
+    if usage.get("completion_tokens") is not None:
+        span.set_attribute("gen_ai.usage.output_tokens", usage["completion_tokens"])
+    end_step_span(span, error_type=error_type)
+
+    # Audit fingerprints, computed from exactly what gets stored in the
+    # plaintext columns below (post usage-extraction) so a later re-hash of
+    # `arguments`/`result` always matches.
+    step = RunStep(
+        run_id=run_id,
+        seq=seq,
+        kind=kind,
+        tool_name=tool_name,
+        arguments=arguments,
+        result=stored,
+        llm_messages=llm_messages,
+        latency_ms=latency_ms,
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+        error_type=error_type,
+        arguments_hash=content_hash(arguments),
+        result_hash=content_hash(stored),
+        span_id=span_id_hex(span),
+    )
+    db.session.add(step)
+    db.session.commit()
+    return result
